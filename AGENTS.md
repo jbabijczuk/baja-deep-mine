@@ -13,9 +13,14 @@ Celem jest szybkie dostarczenie gry na Androida, która łączy kopanie, bezpiec
 5. Nie pytaj o akceptację kolejnych kroków, chyba że decyzja wymaga dostępu do konta, wydatku, zmiany nieodwracalnej lub opublikowania treści w imieniu użytkownika.
 6. Zapisz wynik, zmienione pliki, testy, blocker i następne zadanie. Nie ukrywaj nieukończonej funkcji.
 
+## Język
+
+- Wszystkie raporty, plany i odpowiedzi agentów po polsku.
+- Identyfikatory w kodzie i nazwy API po angielsku.
+- Bez komentarzy w kodzie źródłowym.
+
 ## Kryteria jakości
 
-- Kod bez komentarzy.
 - Dane balansu poza logiką widoków.
 - Brak duplikowania łupów, złota, generatorów i nagród reklamowych.
 - Każde zdarzenie zakupowe musi być zweryfikowane przed przyznaniem przedmiotu.
