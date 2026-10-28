@@ -393,6 +393,13 @@ func _load_game() -> void:
 	lifetime_runs = int(data["lifetime_runs"])
 	last_income_time = float(data.get("saved_at", last_income_time))
 	_settle_income()
+	_secure_tmp_save()
+
+func _secure_tmp_save() -> bool:
+	var tmp_path := save_path + ".tmp"
+	if not _read_save(save_path).is_empty() or _read_save(tmp_path).is_empty():
+		return true
+	return DirAccess.rename_absolute(tmp_path, save_path) == OK
 
 func _read_save(path: String) -> Dictionary:
 	if not FileAccess.file_exists(path):
@@ -414,7 +421,7 @@ func _read_save(path: String) -> Dictionary:
 	return data
 
 func _save_game() -> void:
-	if balance.is_empty():
+	if balance.is_empty() or not _secure_tmp_save():
 		return
 	last_save_time = int(Time.get_unix_time_from_system())
 	var data := {"version": 12, "gold": gold, "drill": drill, "training": training, "generators": generators, "run_number": run_number, "best_depth": best_depth, "lifetime_runs": lifetime_runs, "saved_at": last_income_time}

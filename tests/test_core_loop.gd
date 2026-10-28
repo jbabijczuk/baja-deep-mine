@@ -30,6 +30,8 @@ func _initialize() -> void:
 	_test_resume_reconciles_income()
 	_test_offline_cap_and_future_timestamp()
 	_test_save_recovery()
+	_test_tmp_only_recovery_survives_interrupted_save()
+	_test_tmp_kept_when_promotion_fails()
 	_check(_clean_test_dir(), "test directory removed")
 	_check(_fingerprint(MainScript.SAVE_PATH) == real_before, "real player save untouched")
 	print("PASSED: %d  FAILURES: %d" % [passes, failures])
@@ -390,7 +392,7 @@ func _test_save_recovery() -> void:
 	g._save_game()
 	_check(FileAccess.file_exists(g.save_path + ".bak"), "backup created on second save")
 	_check(not FileAccess.file_exists(g.save_path + ".tmp"), "temp file replaced after save")
-	_check(float(g._read_save(g.save_path)["gold"]) == 200.0, "save replaced on windows-style rename")
+	_check(float(g._read_save(g.save_path).get("gold", -1.0)) == 200.0, "save replaced on windows-style rename")
 	var valid := FileAccess.get_file_as_string(g.save_path)
 	var cases := {
 		"corrupt": "{garbage",
@@ -419,8 +421,8 @@ func _test_save_recovery() -> void:
 	_write(g.save_path, "{garbage")
 	g.gold = 300.0
 	g._save_game()
-	_check(float(g._read_save(g.save_path)["gold"]) == 300.0, "save after corruption succeeds")
-	_check(float(g._read_save(g.save_path + ".bak")["gold"]) == 100.0, "corrupt save never overwrites backup")
+	_check(float(g._read_save(g.save_path).get("gold", -1.0)) == 300.0, "save after corruption succeeds")
+	_check(float(g._read_save(g.save_path + ".bak").get("gold", -1.0)) == 100.0, "corrupt save never overwrites backup")
 	for path in [g.save_path, g.save_path + ".tmp", g.save_path + ".bak"]:
 		_write(path, "{bad")
 	var d := _game("recovery")
@@ -428,3 +430,49 @@ func _test_save_recovery() -> void:
 	_check(d.gold == initial and d.drill == 1 and d.generators.is_empty(), "all saves invalid falls back to defaults")
 	d.free()
 	g.free()
+
+func _tmp_only_fixture(tag: String) -> Control:
+	var src := _game(tag + "_src")
+	src.gold = 200.0
+	src.drill = 3
+	src.generators = [8]
+	src.last_income_time = _now()
+	var text := JSON.stringify({"version": 12, "gold": src.gold, "drill": src.drill, "training": src.training, "generators": src.generators, "run_number": 4, "best_depth": 3, "lifetime_runs": 4, "saved_at": src.last_income_time})
+	src.free()
+	var g := _game(tag)
+	_write(g.save_path + ".tmp", text)
+	_check(not FileAccess.file_exists(g.save_path) and not FileAccess.file_exists(g.save_path + ".bak"), "fixture has only valid tmp")
+	return g
+
+func _test_tmp_only_recovery_survives_interrupted_save() -> void:
+	var g := _tmp_only_fixture("tmponly")
+	g._load_game()
+	_check(_near(g.gold, 200.0, 10.0) and g.drill == 3, "tmp-only save loaded")
+	_check(float(g._read_save(g.save_path).get("gold", -1.0)) >= 200.0, "recovered tmp secured as save after load")
+	_write(g.save_path + ".tmp", "{\"gold\": 9")
+	var h := _game("tmponly")
+	h._load_game()
+	_check(_near(h.gold, 200.0, 10.0) and h.drill == 3 and h.run_number == 4 and h.generators.size() == 1, "progress kept after interrupted next save")
+	h.gold = 500.0
+	h._save_game()
+	var k := _game("tmponly")
+	k._load_game()
+	_check(_near(k.gold, 500.0, 10.0), "next full save succeeds after recovery")
+	for x in [g, h, k]:
+		x.free()
+
+func _test_tmp_kept_when_promotion_fails() -> void:
+	var g := _tmp_only_fixture("blocked")
+	var valid := FileAccess.get_file_as_string(g.save_path + ".tmp")
+	_check(DirAccess.make_dir_absolute(g.save_path) == OK, "block save path with directory")
+	g._load_game()
+	_check(g.drill == 3, "tmp loaded while save path blocked")
+	g.gold = 999.0
+	g._save_game()
+	_check(FileAccess.get_file_as_string(g.save_path + ".tmp") == valid, "failed promotion leaves only valid tmp untouched")
+	_check(DirAccess.remove_absolute(g.save_path) == OK, "unblock save path")
+	var h := _game("blocked")
+	h._load_game()
+	_check(h.drill == 3 and _near(h.gold, 200.0, 10.0), "progress kept after failed promotion")
+	g.free()
+	h.free()
