@@ -4,6 +4,9 @@ const DATA_PATH = "res://data/balance.json"
 const SAVE_PATH = "user://save_v12.json"
 const EVENTS_PATH = "user://events_v12.jsonl"
 
+var save_path: String = SAVE_PATH
+var events_path: String = EVENTS_PATH
+var last_income_time: float = 0.0
 var balance: Dictionary = {}
 var gold: float = 0.0
 var drill: int = 1
@@ -41,7 +44,11 @@ func _ready() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED:
+		_settle_income()
 		_save_game()
+	elif what == NOTIFICATION_APPLICATION_RESUMED:
+		_settle_income()
+		_render()
 
 func _create_ui() -> void:
 	var bg := ColorRect.new()
@@ -268,6 +275,8 @@ func _generated_core_rate() -> int:
 	return int(rates[tier])
 
 func _resolve_heart(accept: bool) -> void:
+	if current_screen != "mine":
+		return
 	run_data["heart_resolved"] = true
 	run_data["curse_active"] = accept
 	notice = "Klątwa przyjeta: teraz kazdy skarb wiecej wart." if accept else "Odrzucono klatwe. Wyprawa jest bezpieczniejsza."
@@ -275,6 +284,8 @@ func _resolve_heart(accept: bool) -> void:
 	_render()
 
 func _fight() -> void:
+	if current_screen != "mine" or not bool(run_data.get("encounter", false)):
+		return
 	var chance := minf(0.95, 0.58 + (drill - 1) * 0.1 + (training - 1) * 0.06)
 	if rng.randf() <= chance:
 		run_data["encounter"] = false
@@ -287,14 +298,19 @@ func _fight() -> void:
 		_retreat(true)
 
 func _retreat(with_loss: bool) -> void:
-	var loot := int(run_data["loot"])
+	if current_screen != "mine" or run_data.is_empty():
+		return
+	var settled: Dictionary = run_data
+	run_data = {}
+	current_screen = "base"
+	var loot := int(settled["loot"])
 	if with_loss:
 		loot = int(round(loot * (1.0 - float(balance["danger"]["escape_loss_fraction"]))))
 	gold += loot
 	var added: int = 0
 	if not with_loss:
 		var slots := int(balance["base"]["generator_slots"])
-		for rate_value in run_data["cores"]:
+		for rate_value in settled["cores"]:
 			var rate := int(rate_value)
 			if generators.size() < slots:
 				generators.append(rate)
@@ -307,9 +323,8 @@ func _retreat(with_loss: bool) -> void:
 				if rate > int(generators[weakest]):
 					generators[weakest] = rate
 					added += 1
-	best_depth = max(best_depth, int(run_data["depth"]))
-	_event("run_end", {"loot": loot, "new_generators": added, "depth": run_data["depth"], "escaped": with_loss})
-	current_screen = "base"
+	best_depth = max(best_depth, int(settled["depth"]))
+	_event("run_end", {"loot": loot, "new_generators": added, "depth": settled["depth"], "escaped": with_loss})
 	notice = "Wrociles! +%d zl, zainstalowane rdzenie: %d. Produkcja bazy: %s zl/s." % [loot, added, _money(_income())]
 	_save_game()
 	_render()
@@ -339,8 +354,19 @@ func _income() -> float:
 		sum += float(rate)
 	return sum
 
+func _settle_income() -> void:
+	if balance.is_empty():
+		return
+	var now := Time.get_unix_time_from_system()
+	var max_seconds := float(balance["base"]["offline_cap_hours"]) * 3600.0
+	var seconds := clampf(now - last_income_time, 0.0, max_seconds)
+	last_income_time = now
+	gold += seconds * _income()
+	if seconds > 10.0 and _income() > 0:
+		notice = "Twoje generatory pracowaly podczas nieobecnosci: +%s zl." % _money(seconds * _income())
+
 func _tick() -> void:
-	gold += _income()
+	_settle_income()
 	var now: int = int(Time.get_unix_time_from_system())
 	if now - last_save_time >= 15:
 		_save_game()
@@ -350,42 +376,66 @@ func _tick() -> void:
 func _load_game() -> void:
 	var base: Dictionary = balance["base"]
 	gold = float(base["initial_gold"])
-	if not FileAccess.file_exists(SAVE_PATH):
+	last_income_time = Time.get_unix_time_from_system()
+	var data: Dictionary = {}
+	for path in [save_path, save_path + ".tmp", save_path + ".bak"]:
+		data = _read_save(path)
+		if not data.is_empty():
+			break
+	if data.is_empty():
 		return
-	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
-	if f == null:
-		return
-	var data = JSON.parse_string(f.get_as_text())
-	if typeof(data) != TYPE_DICTIONARY:
-		return
-	gold = float(data.get("gold", gold))
-	drill = int(data.get("drill", 1))
-	training = int(data.get("training", 1))
-	generators = data.get("generators", [])
-	run_number = int(data.get("run_number", 0))
-	best_depth = int(data.get("best_depth", 0))
-	lifetime_runs = int(data.get("lifetime_runs", 0))
-	var saved_at := int(data.get("saved_at", int(Time.get_unix_time_from_system())))
-	var max_seconds := int(base["offline_cap_hours"]) * 3600
-	var seconds := clampi(int(Time.get_unix_time_from_system()) - saved_at, 0, max_seconds)
-	gold += seconds * _income()
-	if seconds > 10 and _income() > 0:
-		notice = "Twoje generatory pracowaly podczas nieobecnosci: +%s zl." % _money(seconds * _income())
+	gold = float(data["gold"])
+	drill = int(data["drill"])
+	training = int(data["training"])
+	generators = data["generators"]
+	run_number = int(data["run_number"])
+	best_depth = int(data["best_depth"])
+	lifetime_runs = int(data["lifetime_runs"])
+	last_income_time = float(data.get("saved_at", last_income_time))
+	_settle_income()
+
+func _read_save(path: String) -> Dictionary:
+	if not FileAccess.file_exists(path):
+		return {}
+	var json := JSON.new()
+	if json.parse(FileAccess.get_file_as_string(path)) != OK or typeof(json.data) != TYPE_DICTIONARY:
+		return {}
+	var data: Dictionary = json.data
+	for key in ["gold", "drill", "training", "run_number", "best_depth", "lifetime_runs", "saved_at"]:
+		if data.has(key) and typeof(data[key]) != TYPE_FLOAT and typeof(data[key]) != TYPE_INT:
+			return {}
+		if not data.has(key) and key != "saved_at":
+			return {}
+	if typeof(data.get("generators")) != TYPE_ARRAY:
+		return {}
+	for rate in data["generators"]:
+		if typeof(rate) != TYPE_FLOAT and typeof(rate) != TYPE_INT:
+			return {}
+	return data
 
 func _save_game() -> void:
 	if balance.is_empty():
 		return
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	last_save_time = int(Time.get_unix_time_from_system())
+	var data := {"version": 12, "gold": gold, "drill": drill, "training": training, "generators": generators, "run_number": run_number, "best_depth": best_depth, "lifetime_runs": lifetime_runs, "saved_at": last_income_time}
+	var text := JSON.stringify(data)
+	var tmp_path := save_path + ".tmp"
+	var f := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if f == null:
 		return
-	last_save_time = int(Time.get_unix_time_from_system())
-	var data := {"version": 12, "gold": gold, "drill": drill, "training": training, "generators": generators, "run_number": run_number, "best_depth": best_depth, "lifetime_runs": lifetime_runs, "saved_at": last_save_time}
-	f.store_string(JSON.stringify(data))
+	f.store_string(text)
+	f.flush()
+	f.close()
+	if FileAccess.get_file_as_string(tmp_path) != text or _read_save(tmp_path).is_empty():
+		return
+	if not _read_save(save_path).is_empty():
+		DirAccess.copy_absolute(save_path, save_path + ".bak")
+	DirAccess.rename_absolute(tmp_path, save_path)
 
 func _event(name: String, payload: Dictionary) -> void:
-	var f := FileAccess.open(EVENTS_PATH, FileAccess.READ_WRITE)
+	var f := FileAccess.open(events_path, FileAccess.READ_WRITE)
 	if f == null:
-		f = FileAccess.open(EVENTS_PATH, FileAccess.WRITE)
+		f = FileAccess.open(events_path, FileAccess.WRITE)
 	if f == null:
 		return
 	f.seek_end()
