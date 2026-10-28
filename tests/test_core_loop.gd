@@ -3,9 +3,31 @@ extends SceneTree
 const MainScript = preload("res://scripts/main.gd")
 const MainScene = preload("res://scenes/Main.tscn")
 const TEST_DIR = "user://dm_tests/"
+const EXPECTED_ASSERTIONS = 99
+const TESTS = [
+	"_test_dig_core_return_generator",
+	"_test_upgrade",
+	"_test_escape_loses_loot_and_cores",
+	"_test_fight",
+	"_test_full_slots_replace_weakest",
+	"_test_save_load",
+	"_test_scene_startup",
+	"_test_warning_threshold",
+	"_test_encounter_event_count",
+	"_test_forced_fight_win",
+	"_test_forced_fight_loss",
+	"_test_cursed_loot",
+	"_test_repeated_returns",
+	"_test_resume_reconciles_income",
+	"_test_offline_cap_and_future_timestamp",
+	"_test_save_recovery",
+	"_test_tmp_only_recovery_survives_interrupted_save",
+	"_test_tmp_kept_when_promotion_fails",
+]
 
 var failures: int = 0
 var passes: int = 0
+var assertions: int = 0
 
 func _initialize() -> void:
 	await process_frame
@@ -14,27 +36,21 @@ func _initialize() -> void:
 		print("FAIL test directory setup")
 		quit(1)
 		return
-	_test_dig_core_return_generator()
-	_test_upgrade()
-	_test_escape_loses_loot_and_cores()
-	_test_fight()
-	_test_full_slots_replace_weakest()
-	_test_save_load()
-	_test_scene_startup()
-	_test_warning_threshold()
-	_test_encounter_event_count()
-	_test_forced_fight_win()
-	_test_forced_fight_loss()
-	_test_cursed_loot()
-	_test_repeated_returns()
-	_test_resume_reconciles_income()
-	_test_offline_cap_and_future_timestamp()
-	_test_save_recovery()
-	_test_tmp_only_recovery_survives_interrupted_save()
-	_test_tmp_kept_when_promotion_fails()
+	var completed := 0
+	for test_name in TESTS:
+		if call(test_name) == true:
+			completed += 1
+		else:
+			failures += 1
+			print("FAIL test not completed: ", test_name)
 	_check(_clean_test_dir(), "test directory removed")
 	_check(_fingerprint(MainScript.SAVE_PATH) == real_before, "real player save untouched")
+	if assertions != EXPECTED_ASSERTIONS:
+		failures += 1
+		print("FAIL assertion count %d, expected %d" % [assertions, EXPECTED_ASSERTIONS])
 	print("PASSED: %d  FAILURES: %d" % [passes, failures])
+	if failures == 0 and completed == TESTS.size():
+		print("ALL_TESTS_COMPLETED tests=%d assertions=%d" % [completed, assertions])
 	quit(1 if failures > 0 else 0)
 
 func _fingerprint(path: String) -> String:
@@ -51,6 +67,7 @@ func _clean_test_dir() -> bool:
 	return DirAccess.remove_absolute(TEST_DIR) == OK
 
 func _check(cond: bool, label: String) -> void:
+	assertions += 1
 	if cond:
 		passes += 1
 		print("PASS ", label)
@@ -114,7 +131,7 @@ func _write(path: String, text: String) -> void:
 		f.store_string(text)
 		f.close()
 
-func _test_dig_core_return_generator() -> void:
+func _test_dig_core_return_generator() -> bool:
 	var g := _game()
 	g._start_run()
 	_check(g.current_screen == "mine", "start run opens mine")
@@ -137,8 +154,9 @@ func _test_dig_core_return_generator() -> void:
 	g._tick()
 	_check(_near(g.gold, gold_tick + g._income(), g._income() * 0.1), "tick adds income")
 	g.free()
+	return true
 
-func _test_upgrade() -> void:
+func _test_upgrade() -> bool:
 	var g := _game()
 	var cost: int = g._upgrade_cost("drill")
 	g.gold = cost - 1
@@ -152,8 +170,9 @@ func _test_upgrade() -> void:
 	g._upgrade("training")
 	_check(g.training == 2, "training upgrade bought")
 	g.free()
+	return true
 
-func _test_escape_loses_loot_and_cores() -> void:
+func _test_escape_loses_loot_and_cores() -> bool:
 	var g := _game()
 	g._start_run()
 	g.run_data["loot"] = 100
@@ -163,8 +182,9 @@ func _test_escape_loses_loot_and_cores() -> void:
 	_check(_near(g.gold, gold_before + 70, 0.01), "escape keeps 70% loot")
 	_check(g.generators.is_empty(), "escape installs no cores")
 	g.free()
+	return true
 
-func _test_fight() -> void:
+func _test_fight() -> bool:
 	var g := _game()
 	g._start_run()
 	g.run_data["encounter"] = true
@@ -176,8 +196,9 @@ func _test_fight() -> void:
 	var lost: bool = g.current_screen == "base"
 	_check(won or lost, "fight resolves encounter")
 	g.free()
+	return true
 
-func _test_full_slots_replace_weakest() -> void:
+func _test_full_slots_replace_weakest() -> bool:
 	var g := _game()
 	var slots := int(g.balance["base"]["generator_slots"])
 	for _n in range(slots):
@@ -188,8 +209,9 @@ func _test_full_slots_replace_weakest() -> void:
 	_check(g.generators.size() == slots, "slot limit kept")
 	_check(g._income() == float(slots - 1 + 22), "weakest replaced only by stronger")
 	g.free()
+	return true
 
-func _test_save_load() -> void:
+func _test_save_load() -> bool:
 	var g := _game("saveload")
 	g.gold = 1234.0
 	g.drill = 3
@@ -207,8 +229,9 @@ func _test_save_load() -> void:
 	_check(h.run_number == 5 and h.best_depth == 4 and h.lifetime_runs == 5, "progress restored")
 	g.free()
 	h.free()
+	return true
 
-func _test_scene_startup() -> void:
+func _test_scene_startup() -> bool:
 	var g: Control = MainScene.instantiate()
 	_isolate(g, "scene")
 	root.add_child(g)
@@ -220,8 +243,9 @@ func _test_scene_startup() -> void:
 	_check(_has_label(g, "WYPRAWA"), "scene renders mine")
 	root.remove_child(g)
 	g.free()
+	return true
 
-func _test_warning_threshold() -> void:
+func _test_warning_threshold() -> bool:
 	var g: Control = MainScene.instantiate()
 	_isolate(g, "warning")
 	root.add_child(g)
@@ -235,8 +259,9 @@ func _test_warning_threshold() -> void:
 	_check(_has_label(g, "UWAGA"), "warning at threshold")
 	root.remove_child(g)
 	g.free()
+	return true
 
-func _test_encounter_event_count() -> void:
+func _test_encounter_event_count() -> bool:
 	var g := _game("encounter")
 	g.drill = 10
 	g._start_run()
@@ -253,8 +278,9 @@ func _test_encounter_event_count() -> void:
 	_check(_count_events(g, "monster_encounter") == 1, "exactly one encounter event")
 	_check(_count_events(g, "dig") == g.run_data["tiles"].size(), "one dig event per hit")
 	g.free()
+	return true
 
-func _test_forced_fight_win() -> void:
+func _test_forced_fight_win() -> bool:
 	var g := _game()
 	g._start_run()
 	g.run_data["loot"] = 50
@@ -268,8 +294,9 @@ func _test_forced_fight_win() -> void:
 	g._fight()
 	_check(g.current_screen == "mine", "fight without encounter ignored")
 	g.free()
+	return true
 
-func _test_forced_fight_loss() -> void:
+func _test_forced_fight_loss() -> bool:
 	var g := _game()
 	g._start_run()
 	g.run_data["loot"] = 50
@@ -282,8 +309,9 @@ func _test_forced_fight_loss() -> void:
 	_check(_near(g.gold, gold_before + 35, 0.01), "forced loss keeps 70% loot")
 	_check(g.generators.is_empty(), "forced loss installs no cores")
 	g.free()
+	return true
 
-func _test_cursed_loot() -> void:
+func _test_cursed_loot() -> bool:
 	var g := _game()
 	g.drill = 10
 	g._start_run()
@@ -300,8 +328,9 @@ func _test_cursed_loot() -> void:
 	g._mine_tile(0)
 	_check(int(g.run_data["loot"]) == int(types[tile_type]["value"]), "rejected curse keeps normal loot")
 	g.free()
+	return true
 
-func _test_repeated_returns() -> void:
+func _test_repeated_returns() -> bool:
 	var g := _game()
 	g._retreat(false)
 	g._retreat(true)
@@ -328,8 +357,9 @@ func _test_repeated_returns() -> void:
 	g._retreat(false)
 	_check(_near(g.gold, start + 70, 0.01) and g.generators.size() == 1, "escape then return pays once, no cores")
 	g.free()
+	return true
 
-func _test_resume_reconciles_income() -> void:
+func _test_resume_reconciles_income() -> bool:
 	var g := _game("resume")
 	g.generators = [5]
 	g.last_income_time = _now() - 100.0
@@ -358,8 +388,9 @@ func _test_resume_reconciles_income() -> void:
 	g._notification(Node.NOTIFICATION_APPLICATION_RESUMED)
 	_check(g.gold == start and g.last_income_time <= _now(), "future timestamp on resume pays nothing and resets")
 	g.free()
+	return true
 
-func _test_offline_cap_and_future_timestamp() -> void:
+func _test_offline_cap_and_future_timestamp() -> bool:
 	var g := _game("offline")
 	var cap_hours := float(g.balance["base"]["offline_cap_hours"])
 	g.generators = [10]
@@ -382,8 +413,9 @@ func _test_offline_cap_and_future_timestamp() -> void:
 	_check(m.gold == 100.0 and m.last_income_time <= _now(), "future save timestamp pays nothing")
 	for x in [g, h, k, m]:
 		x.free()
+	return true
 
-func _test_save_recovery() -> void:
+func _test_save_recovery() -> bool:
 	var g := _game("recovery")
 	var initial := float(g.balance["base"]["initial_gold"])
 	g.gold = 100.0
@@ -430,6 +462,7 @@ func _test_save_recovery() -> void:
 	_check(d.gold == initial and d.drill == 1 and d.generators.is_empty(), "all saves invalid falls back to defaults")
 	d.free()
 	g.free()
+	return true
 
 func _tmp_only_fixture(tag: String) -> Control:
 	var src := _game(tag + "_src")
@@ -444,7 +477,7 @@ func _tmp_only_fixture(tag: String) -> Control:
 	_check(not FileAccess.file_exists(g.save_path) and not FileAccess.file_exists(g.save_path + ".bak"), "fixture has only valid tmp")
 	return g
 
-func _test_tmp_only_recovery_survives_interrupted_save() -> void:
+func _test_tmp_only_recovery_survives_interrupted_save() -> bool:
 	var g := _tmp_only_fixture("tmponly")
 	g._load_game()
 	_check(_near(g.gold, 200.0, 10.0) and g.drill == 3, "tmp-only save loaded")
@@ -460,8 +493,9 @@ func _test_tmp_only_recovery_survives_interrupted_save() -> void:
 	_check(_near(k.gold, 500.0, 10.0), "next full save succeeds after recovery")
 	for x in [g, h, k]:
 		x.free()
+	return true
 
-func _test_tmp_kept_when_promotion_fails() -> void:
+func _test_tmp_kept_when_promotion_fails() -> bool:
 	var g := _tmp_only_fixture("blocked")
 	var valid := FileAccess.get_file_as_string(g.save_path + ".tmp")
 	_check(DirAccess.make_dir_absolute(g.save_path) == OK, "block save path with directory")
@@ -476,3 +510,4 @@ func _test_tmp_kept_when_promotion_fails() -> void:
 	_check(h.drill == 3 and _near(h.gold, 200.0, 10.0), "progress kept after failed promotion")
 	g.free()
 	h.free()
+	return true
