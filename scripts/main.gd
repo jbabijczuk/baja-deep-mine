@@ -169,7 +169,7 @@ func _render_mine() -> void:
 				btn.disabled = true
 		btn.pressed.connect(Callable(self, "_mine_tile").bind(i))
 		grid.add_child(btn)
-	if int(data["noise"]) >= 40:
+	if int(data["noise"]) >= int(balance["danger"]["warning"]):
 		_label("UWAGA: wzrost halasu przyciaga potwory.", 22, "#ff9c98")
 	_button("WROC DO BAZY (ZACHOWAJ LUP)", Callable(self, "_retreat").bind(false))
 
@@ -251,7 +251,7 @@ func _mine_tile(i: int) -> void:
 	if int(run_data["noise"]) >= int(balance["danger"]["encounter"]) and not bool(run_data["encounter_seen"]):
 		run_data["encounter"] = true
 		run_data["encounter_seen"] = true
-	_event("monster_encounter", {"noise": run_data["noise"]})
+		_event("monster_encounter", {"noise": run_data["noise"]})
 	_event("dig", {"type": name, "depth": run_data["depth"], "noise": run_data["noise"]})
 	_render()
 
@@ -275,7 +275,7 @@ func _resolve_heart(accept: bool) -> void:
 	_render()
 
 func _fight() -> void:
-	var chance := min(0.95, 0.58 + (drill - 1) * 0.1 + (training - 1) * 0.06)
+	var chance := minf(0.95, 0.58 + (drill - 1) * 0.1 + (training - 1) * 0.06)
 	if rng.randf() <= chance:
 		run_data["encounter"] = false
 		run_data["noise"] = 28
