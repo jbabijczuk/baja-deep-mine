@@ -3,6 +3,7 @@ extends Control
 const DATA_PATH = "res://data/balance.json"
 const SAVE_PATH = "user://save_v12.json"
 const EVENTS_PATH = "user://events_v12.jsonl"
+const MineTile = preload("res://scripts/mine_tile.gd")
 
 var save_path: String = SAVE_PATH
 var events_path: String = EVENTS_PATH
@@ -22,6 +23,7 @@ var notice: String = "Zacznij wyprawę. Szukaj rdzeni zasilających bazę."
 var last_save_time: int = 0
 var current_screen: String = "base"
 var income_timer: Timer
+var last_hit_index: int = -1
 
 func _ready() -> void:
 	var file := FileAccess.open(DATA_PATH, FileAccess.READ)
@@ -64,6 +66,7 @@ func _create_ui() -> void:
 	add_child(margin)
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	margin.add_child(scroll)
 	content = VBoxContainer.new()
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -153,29 +156,36 @@ func _render_mine() -> void:
 		_panel_text("SERCE KOPALNI: x2 wartosci przyszlego lupu, ale +3 halasu za kazdy cios. Co wybierasz?")
 		_button("PRZYJMIJ KLATWE", Callable(self, "_resolve_heart").bind(true))
 		_button("ODRZUC", Callable(self, "_resolve_heart").bind(false))
+	var frame := PanelContainer.new()
+	var frame_style := StyleBoxFlat.new()
+	frame_style.bg_color = Color("#05070b")
+	frame_style.border_color = Color("#2b3546")
+	frame_style.set_border_width_all(3)
+	frame_style.set_corner_radius_all(8)
+	frame_style.set_content_margin_all(6)
+	frame.add_theme_stylebox_override("panel", frame_style)
+	content.add_child(frame)
 	var grid := GridContainer.new()
+	grid.name = "MineGrid"
 	grid.columns = int(balance["grid"]["width"])
-	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content.add_child(grid)
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
+	frame.add_child(grid)
+	var tile_height := clampf((get_viewport_rect().size.y - 660.0) / float(balance["grid"]["height"]), 64.0, 104.0)
+	var types: Dictionary = balance["tiles"]
 	var tiles: Array = run_data["tiles"]
 	for i in range(tiles.size()):
 		var tile: Dictionary = tiles[i]
-		var btn := Button.new()
-		btn.custom_minimum_size = Vector2(97, 79)
-		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.add_theme_font_size_override("font_size", 17)
-		if bool(tile["dug"]):
-			btn.text = "·"
-			btn.modulate = Color("#526377")
-		else:
-			var name: String = str(tile["type"])
-			var types: Dictionary = balance["tiles"]
-			btn.text = "%s\n%dHP" % [str(types[name]["label"]), int(tile["hp"])]
-			btn.modulate = Color(str(types[name]["color"]))
-			if not _can_dig(i):
-				btn.disabled = true
-		btn.pressed.connect(Callable(self, "_mine_tile").bind(i))
-		grid.add_child(btn)
+		var name: String = str(tile["type"])
+		var view: Button = MineTile.new()
+		view.custom_minimum_size = Vector2(0, tile_height)
+		view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		view.setup(name, Color(str(types[name]["color"])), int(tile["hp"]), int(tile.get("max_hp", tile["hp"])), bool(tile["dug"]), _can_dig(i), i)
+		view.pressed.connect(Callable(self, "_mine_tile").bind(i))
+		grid.add_child(view)
+		if i == last_hit_index:
+			view.play_hit()
+	last_hit_index = -1
 	if int(data["noise"]) >= int(balance["danger"]["warning"]):
 		_label("UWAGA: wzrost halasu przyciaga potwory.", 22, "#ff9c98")
 	_button("WROC DO BAZY (ZACHOWAJ LUP)", Callable(self, "_retreat").bind(false))
@@ -207,7 +217,7 @@ func _start_run() -> void:
 				name = "core"
 			var types: Dictionary = balance["tiles"]
 			var hp := int(types[name]["hp"]) + (1 if y > 5 else 0)
-			tiles.append({"type": name, "hp": hp, "dug": false})
+			tiles.append({"type": name, "hp": hp, "max_hp": hp, "dug": false})
 	run_data = {"tiles": tiles, "loot": 0, "noise": 0, "cores": [], "depth": 0, "curse_active": false, "heart_found": false, "heart_resolved": false, "encounter": false, "encounter_seen": false, "hits": 0}
 	current_screen = "mine"
 	notice = "Kop od gory, szukaj drog do bogatych zyl i rdzeni."
@@ -260,6 +270,7 @@ func _mine_tile(i: int) -> void:
 		run_data["encounter_seen"] = true
 		_event("monster_encounter", {"noise": run_data["noise"]})
 	_event("dig", {"type": name, "depth": run_data["depth"], "noise": run_data["noise"]})
+	last_hit_index = i
 	_render()
 
 func _generated_core_rate() -> int:

@@ -3,7 +3,7 @@ extends SceneTree
 const MainScript = preload("res://scripts/main.gd")
 const MainScene = preload("res://scenes/Main.tscn")
 const TEST_DIR = "user://dm_tests/"
-const EXPECTED_ASSERTIONS = 99
+const EXPECTED_ASSERTIONS = 107
 const TESTS = [
 	"_test_dig_core_return_generator",
 	"_test_upgrade",
@@ -12,6 +12,7 @@ const TESTS = [
 	"_test_full_slots_replace_weakest",
 	"_test_save_load",
 	"_test_scene_startup",
+	"_test_mine_tile_view",
 	"_test_warning_threshold",
 	"_test_encounter_event_count",
 	"_test_forced_fight_win",
@@ -241,6 +242,42 @@ func _test_scene_startup() -> bool:
 	_check(g.current_screen == "base" and _has_label(g, "BAZA"), "scene shows base")
 	g._start_run()
 	_check(_has_label(g, "WYPRAWA"), "scene renders mine")
+	root.remove_child(g)
+	g.free()
+	return true
+
+func _mine_grid(g: Control) -> GridContainer:
+	return g.content.find_child("MineGrid", true, false) as GridContainer
+
+func _test_mine_tile_view() -> bool:
+	var g: Control = MainScene.instantiate()
+	_isolate(g, "tiles")
+	root.add_child(g)
+	g._start_run()
+	var w := int(g.balance["grid"]["width"])
+	var grid := _mine_grid(g)
+	_check(grid != null and grid.get_child_count() == g.run_data["tiles"].size(), "mine grid has tile per field")
+	var no_text := true
+	var top_enabled := true
+	for i in range(grid.get_child_count()):
+		var view: Button = grid.get_child(i)
+		no_text = no_text and view.text == "" and view.get_script() == g.MineTile
+		if i < w:
+			top_enabled = top_enabled and not view.disabled
+	_check(no_text, "tiles are graphic without text")
+	_check(top_enabled and grid.get_child(w).disabled, "only reachable tiles clickable")
+	var loot_before := int(g.run_data["loot"])
+	var hits_before := int(g.run_data["hits"])
+	grid.get_child(0).pressed.emit()
+	_check(int(g.run_data["hits"]) == hits_before + 1, "tile press digs once")
+	var view0: Button = _mine_grid(g).get_child(0)
+	_check(view0.flash > 0.0 or view0.burst > 0.0, "hit animation plays")
+	_dig_until_dug(g, 0)
+	var loot_dug := int(g.run_data["loot"])
+	_check(loot_dug > loot_before and _mine_grid(g).get_child(0).dug, "dug tile shown as tunnel")
+	_mine_grid(g).get_child(0).pressed.emit()
+	_check(int(g.run_data["loot"]) == loot_dug, "dug tile press gives no loot")
+	_check(not _mine_grid(g).get_child(w).disabled, "tile below tunnel becomes clickable")
 	root.remove_child(g)
 	g.free()
 	return true

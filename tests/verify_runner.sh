@@ -78,7 +78,7 @@ launch_clean() {
 run_case control
 expect "control: runner exit 0" "$(is "$runner_code" 0)"
 expect "control: godot launched cleanly" "$(launch_clean)"
-expect "control: 18 tests, 99 assertions on every binary" "$(is "$(lines 'ALL_TESTS_COMPLETED tests=18 assertions=99')" "$count")"
+expect "control: 19 tests, 107 assertions on every binary" "$(is "$(lines 'ALL_TESTS_COMPLETED tests=19 assertions=107')" "$count")"
 expect "control: RESULT OK on every binary" "$(is "$(lines 'RESULT: OK')" "$count")"
 if [ $status -ne 0 ]; then
 	echo "$runner_log"
@@ -102,7 +102,7 @@ expect "forced exit 0: godot exit 0 caught by output checks" "$(is "$(lines 'RES
 run_case missing_assertion
 expect "missing assertion: runner exit 1" "$(is "$runner_code" 1)"
 expect "missing assertion: godot launched cleanly" "$(launch_clean)"
-expect "missing assertion: count mismatch reported" "$(is "$(lines 'FAIL assertion count 98, expected 99')" "$count")"
+expect "missing assertion: count mismatch reported" "$(is "$(lines 'FAIL assertion count 106, expected 107')" "$count")"
 expect "missing assertion: no script error" "$(is "$(matches 'SCRIPT ERROR')" 0)"
 expect "missing assertion: failure attributed" "$(is "$(lines 'RESULT: FAILED [exit 1: -s res://tests/test_core_loop.gd] [failed checks] [completion marker missing]')" "$count")"
 
