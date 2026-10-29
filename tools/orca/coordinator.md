@@ -70,6 +70,7 @@ Spec: Target (pliki/obszar z Issue), Change (wymagania z Issue), Constraints (AG
 - `worker_done` przyjmujesz tylko, gdy `payload.taskId` i `payload.dispatchId` są równe oczekiwanym, a `orca orchestration worker-show --dispatch <dispatch> --json` pokazuje rozliczony Dispatch. `outcome` ≠ `succeeded` = BLOCKED bez push i PR.
 - Developer: zweryfikuj sam `git -C <wt> log -1 --format=%H`, `git -C <wt> diff main --stat`, uruchom testy. Rozbieżność z raportem = BLOCKED.
 - Przed `--ack` zdecyduj o terminalu: Developer — `worker-retain` (poprawki); Reviewer — `worker-release`.
+- Każde puste oczekiwanie: `worker-show --dispatch <dispatch> --json`; `projection.stage.activity` = `done` przy `outcome` = `in_progress` oznacza turę zakończoną bez `worker_done` — wyślij `orca orchestration send --to dispatch:<dispatch> --subject "Wyslij worker_done" --body $b --json` z prośbą o `worker_done` poleceniem z preambuły i czekaj dalej.
 - Trzy puste oczekiwania z rzędu: `worker-list --run <run> --include-remote --json` i referencja recovery. `unverifiable` nie uprawnia do niczego poza czekaniem.
 
 ## 5. Reviewer (Codex)
