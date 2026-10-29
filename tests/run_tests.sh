@@ -8,8 +8,19 @@ if [ "${1:-}" = "--project" ]; then
 fi
 bins=("$@")
 if [ ${#bins[@]} -eq 0 ]; then
-	bins=("${GODOT:-godot}")
+	if [ -z "${GODOT_BIN:-}" ]; then
+		echo "SETUP ERROR: GODOT_BIN is not set. Set GODOT_BIN to the Godot 4.7.x console binary or pass its path as an argument."
+		exit 2
+	fi
+	bins=("$GODOT_BIN")
 fi
+for bin in "${bins[@]}"; do
+	version="$(timeout 60 "$bin" --headless --version 2>/dev/null | tr -d '\r' | head -n 1)"
+	if ! grep -qE "^4\.7\." <<<"$version"; then
+		echo "SETUP ERROR: $bin reports '${version:-no version}', required Godot 4.7.x. Set GODOT_BIN to the Godot 4.7.x console binary."
+		exit 2
+	fi
+done
 
 status=0
 for bin in "${bins[@]}"; do

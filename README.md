@@ -4,7 +4,7 @@ Nowa ścieżka produkcyjna: build → publikacja → obserwacja → aktualizacja
 
 ## Uruchomienie
 
-1. Zainstaluj Godot 4.6 standard/GDScript.
+1. Zainstaluj Godot 4.7.x standard/GDScript. Testy: ustaw `GODOT_BIN` na binarium 4.7.x i uruchom `bash tests/run_tests.sh` (szczegóły w `AGENTS.md`).
 2. Wybierz Import i otwórz plik `project.godot`.
 3. Uruchom F5. Gra otwiera się w pionie, w rozdzielczości 720×1280.
 4. Rozpocznij wyprawę, kop od pierwszego rzędu, znajdź rdzeń, wróć, odbierz dochód na sekundę i kup ulepszenie.
