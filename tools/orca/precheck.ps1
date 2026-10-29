@@ -1,5 +1,11 @@
 $repo = 'jbabijczuk/baja-deep-mine'
 $owner = 'jbabijczuk'
+$lock = 'C:/Users/jbabi/orca/workspaces/BajaDeepMine/orca-queue.lock'
+
+if (Test-Path -LiteralPath $lock) {
+    Write-Output ('precheck: busy, lock present: ' + $lock)
+    exit 2
+}
 
 $running = & gh issue list --repo $repo --state open --label orca-running --limit 50 --json number -q 'length'
 if ($LASTEXITCODE -ne 0) {

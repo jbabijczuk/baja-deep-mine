@@ -23,32 +23,35 @@ Stałe:
 Każda zmiana fazy to nowy komentarz do Issue z jedną linią:
 
 ```
-ORCA-STATE claim=<token> run=<run_id> phase=<claimed|dev|review|fix|publish|done|stuck> round=<review_round> fixes=<n> verdict=<none|APPROVED|CHANGES_REQUESTED> task=<task_id> dispatch=<dispatch_id> request=<request_id> worktree=<selector> branch=<branch> pr=<url|none>
+ORCA-STATE lock=<token> run=<run_id> phase=<claimed|dev|review|fix|publish|done|stuck> round=<review_round> fixes=<n> verdict=<none|APPROVED|CHANGES_REQUESTED> task=<task_id> dispatch=<dispatch_id> request=<request_id> worktree=<selector> branch=<branch> pr=<url|none>
 ```
 
 Pola nieznane w danej chwili wpisuj jako `none`. Obowiązuje ostatnia linia `ORCA-STATE` w Issue, także z wcześniejszego przejęcia. Przed każdym `worker-start` zapisz linię z `phase` docelową, `dispatch=none` i wygenerowanym `request` (`[guid]::NewGuid().ToString()`), dopiero potem uruchom `worker-start ... --retry-request <request>`; po starcie zapisz linię z `task` i `dispatch`.
 
 ## 1. Wybór i przejęcie zadania
 
-1. `gh issue list --repo REPO --state open --label orca-running --json number -q length` — wynik > 0: zakończ bez zmian.
-2. `gh issue list --repo REPO --state open --label orca-ready --author jbabijczuk --json number,title --limit 50` — wybierz najniższy numer. Brak: zakończ bez zmian.
-3. Wygeneruj `token` (GUID). Opublikuj komentarz `ORCA-CLAIM token=<token>`.
-4. `gh issue edit N --repo REPO --add-label orca-running --remove-label orca-ready`.
-5. Odczekaj 20 sekund, pobierz `gh issue view N --repo REPO --json comments`. Rozstrzygnięcie: zwycięża najwcześniejszy komentarz `ORCA-CLAIM` opublikowany po ostatnim komentarzu `ORCA-REQUEUE` (albo od początku, gdy go nie ma). Twój token nie wygrał: zakończ bez dalszych zmian.
-6. Przeczytaj `gh issue view N --repo REPO --json title,body,comments`.
+Globalną wyłączność zapewnia plik `LOCK` = `C:/Users/jbabi/orca/workspaces/BajaDeepMine/orca-queue.lock`, tworzony atomowo; wszystkie sesje koordynatora działają na tym jednym hoście. Blokada obejmuje kontrolę kolejki, wybór Issue i całą jego obsługę.
 
-Wznowienie po awarii zleca wyłącznie właściciel: komentarz `ORCA-REQUEUE` i zamiana `orca-running` na `orca-ready` (procedura w `docs/orca-issue-automation.md`). Issue przechodzi wtedy zwykłe przejęcie, a krok 2 wznawia zapisany Run.
+1. Wygeneruj `token` (GUID) i przejmij blokadę jednym poleceniem; wyjątek oznacza, że inny koordynator pracuje — zakończ bez zmian:
+   `$f = [System.IO.File]::Open('C:/Users/jbabi/orca/workspaces/BajaDeepMine/orca-queue.lock', 'CreateNew', 'Write'); $b = [System.Text.Encoding]::UTF8.GetBytes('token=' + $token); $f.Write($b, 0, $b.Length); $f.Close()`
+2. `gh issue list --repo REPO --state open --label orca-running --json number -q length` — wynik > 0: usuń `LOCK` i zakończ.
+3. `gh issue list --repo REPO --state open --label orca-ready --author jbabijczuk --json number,title --limit 50` — wybierz najniższy numer. Brak: usuń `LOCK` i zakończ.
+4. Dopisz do `LOCK` ` issue=N`, potem `gh issue edit N --repo REPO --add-label orca-running --remove-label orca-ready`.
+5. Przeczytaj `gh issue view N --repo REPO --json title,body,comments`.
+
+`LOCK` usuwasz wyłącznie w kroku 8, gdy zdejmujesz `orca-running`. Przy `phase=stuck` blokada zostaje razem z etykietą. Wznowienie po awarii zleca wyłącznie właściciel według `docs/orca-issue-automation.md`: usuwa `LOCK` i zamienia `orca-running` na `orca-ready`; Issue przechodzi wtedy zwykłe przejęcie, a krok 2 wznawia zapisany Run.
 
 ## 2. Wznowienie albo nowy Run
 
 Ostatnia linia `ORCA-STATE` z `run` ≠ `none`:
 
 1. `orca orchestration run-use --id <run>`; `orca orchestration worker-list --run <run> --include-remote --json` (wszystkie strony). To jest źródło prawdy: pokazuje także Dispatch uruchomiony bez zapisanego komentarza.
-2. Każdy wiersz `live`: wracasz do pętli oczekiwania; nie uruchamiasz nowego workera.
-3. Wiersz `unverifiable`: zapisz `phase=stuck`, opisz stan w komentarzu, zakończ z pozostawionym `orca-running`.
-4. Wiersz `exited` bez rozliczenia: wykonaj dokładnie `projection.nextAction`; `worker-stop` lub `worker-abandon` tylko według referencji recovery. Zadanie Developera kontynuujesz nowym `worker-start --task <task> --retry-of <dispatch> --worktree "id:<worktree>" --agent claude` w tym samym worktree.
-5. `request` ≠ `none` przy `dispatch=none`: `orca orchestration request-show --request <request>`; `completed` — odczytaj receipt; `pending` — powtórz to samo polecenie z `--retry-request <request>`; `absent` — decyduje wyłącznie `worker-list`; brak wiersza w Runie oznacza, że start nie nastąpił, i powtarzasz start z nowym `request`.
-6. Wszystko rozliczone: kontynuuj od fazy z ostatniego `ORCA-STATE`, z jej `round`, `fixes`, `verdict`, gałęzią i worktree. Wynik ostatniego review odczytaj `orca orchestration worker-read --dispatch <dispatch>` lub z komentarza.
+2. Podziel wiersze. Rozliczony = `projection.stage.dispatch` równe `completed` albo `failed`. Rozliczonym nie sprawdzasz liveness: terminal, który nadal należy do Runu, zwalniasz `worker-release` (Developera zachowujesz `worker-retain`, gdy faza wymaga dalszych poprawek).
+3. Nierozliczony `live`: wracasz do pętli oczekiwania; nie uruchamiasz nowego workera.
+4. Nierozliczony `unverifiable`: zapisz `phase=stuck`, opisz stan w komentarzu, zakończ z pozostawionym `orca-running` i `LOCK`.
+5. Nierozliczony `exited`: wykonaj dokładnie `projection.nextAction`; `worker-stop` lub `worker-abandon` tylko według referencji recovery. Gdy Task wraca do `ready` albo `failed`, uruchom go ponownie w tym samym worktree (`worker-start --task <task>`, dla `failed` z `--retry-of <dispatch>`).
+6. `request` ≠ `none` przy `dispatch=none`: `orca orchestration request-show --request <request>`; `completed` — odczytaj receipt; `pending` — powtórz to samo polecenie z tym samym `--retry-request <request>`; `absent` lub brak odpowiedzi — nie twórz nowego `request`: sprawdź `task-list --run <run>`, `dispatch-show --task <task>` i `worker-list`; bez pozytywnego dowodu, że start nie nastąpił, zapisz `phase=stuck` i zakończ z blokadą.
+7. Brak nierozliczonych wierszy: kontynuuj od fazy z ostatniego `ORCA-STATE`, z jej `round`, `fixes`, `verdict`, gałęzią i worktree. Wynik ostatniego review odczytaj `orca orchestration worker-read --dispatch <dispatch>` lub z komentarza.
 
 Brak `run`: `orca orchestration run-create --objective "Issue N" --json`, zapisz `phase=claimed` z `run`.
 
@@ -99,6 +102,6 @@ Komentarz końcowy (`--body-file`): status, rundy review i poprawek, hash commit
 ## 8. Sprzątanie i etykiety
 
 1. `worker-release` dla każdego rozliczonego Dispatcha; `worker-list --run <run> --terminal-state reclaimable --json` ma zwrócić pustą listę.
-2. Każdy Dispatch Runu rozliczony: `gh issue edit N --repo REPO --add-label orca-approved --remove-label orca-running` albo `--add-label orca-blocked --remove-label orca-running`.
-3. Którykolwiek Dispatch nierozliczony lub `unverifiable`: `phase=stuck`, komentarz z opisem, `orca-running` zostaje.
+2. Każdy Dispatch Runu rozliczony: `gh issue edit N --repo REPO --add-label orca-approved --remove-label orca-running` albo `--add-label orca-blocked --remove-label orca-running`, a po sukcesie tej komendy usuń `LOCK`.
+3. Którykolwiek Dispatch nierozliczony: `phase=stuck`, komentarz z opisem, `orca-running` i `LOCK` zostają.
 4. Błąd krytyczny (gh, git, Orca): komentarz BLOCKED, potem punkty 1–3.

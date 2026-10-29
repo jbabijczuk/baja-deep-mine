@@ -9,7 +9,7 @@ Przepływ: Issue z etykietą `orca-ready` → automatyzacja Orca co 5 minut → 
 | Automatyzacja | `BajaDeepMine issue queue`, ID `3f6117f2-1c36-4504-8ab0-41234e1ac826` |
 | Harmonogram | `*/5 * * * *`, strefa `Europe/Warsaw`, nowa sesja przy każdym uruchomieniu |
 | Workspace koordynatora | `C:/Users/jbabi/orca/workspaces/BajaDeepMine/dm-orca-issue-automation` |
-| Precheck | `tools/orca/precheck.ps1` (kod 0 = jest zadanie, 1 = pusta kolejka, 2 = trwa zadanie, 3 = błąd `gh`) |
+| Precheck | `tools/orca/precheck.ps1` (kod 0 = jest zadanie, 1 = pusta kolejka, 2 = trwa zadanie lub istnieje plik blokady, 3 = błąd `gh`) |
 | Procedura koordynatora | `tools/orca/coordinator.md` |
 
 ## Jak zlecić pracę
@@ -41,17 +41,19 @@ Wyłączenie nie przerywa trwającej sesji; ją zamykasz w Orca po sprawdzeniu s
 
 ## Zadanie zawieszone w `orca-running`
 
-Dopóki jakiekolwiek Issue ma `orca-running`, precheck zwraca 2 i nic nowego nie startuje. Koordynator sam pozostawia `orca-running` i zapisuje `phase=stuck`, gdy któregoś workera nie da się rozliczyć. Gdy stan trwa dłużej niż godzinę:
+Jedno zadanie naraz gwarantuje plik blokady `C:/Users/jbabi/orca/workspaces/BajaDeepMine/orca-queue.lock` (zawiera `token` i `issue`). Dopóki istnieje on albo jakiekolwiek Issue ma `orca-running`, precheck zwraca 2 i nic nowego nie startuje. Koordynator sam pozostawia obie blokady i zapisuje `phase=stuck`, gdy któregoś workera nie da się rozliczyć. Gdy stan trwa dłużej niż godzinę:
 
 1. W komentarzach Issue znajdź ostatnią linię `ORCA-STATE run=... phase=... dispatch=...`.
 2. `orca automations runs --id 3f6117f2-1c36-4504-8ab0-41234e1ac826 --limit 3 --json` — sesja koordynatora nadal aktywna: czekaj.
-3. `orca orchestration worker-list --run <run> --include-remote --json` i dla każdego wiersza `projection.liveness`:
+3. `orca orchestration worker-list --run <run> --include-remote --json`. Wiersze z `projection.stage.dispatch` równym `completed` lub `failed` są rozliczone — ich liveness pomijasz. Dla pozostałych:
    - `live`: czekaj.
    - `unverifiable`: nie zwalniaj, nie zatrzymuj i nie kolejkuj ponownie; sprawdź `orca orchestration worker-show --dispatch <dispatch> --json` i czekaj na `live` albo `exited`.
-   - `exited` bez rozliczenia: wykonaj dokładnie `projection.nextAction`; gdy wskazuje zakończenie, `orca orchestration worker-stop --dispatch <dispatch> --json` (albo `worker-abandon`, gdy procesu nie da się potwierdzić).
+   - `exited`: wykonaj dokładnie `projection.nextAction`; gdy wskazuje zakończenie, `orca orchestration worker-stop --dispatch <dispatch> --json` (albo `worker-abandon`, gdy procesu nie da się potwierdzić).
 4. Dopiero gdy każdy Dispatch Runu jest rozliczony:
-   - kontynuacja: dodaj komentarz `ORCA-REQUEUE`, usuń `orca-running`, nadaj `orca-ready`; następny koordynator wznowi ten sam Run, gałąź i licznik rund zamiast tworzyć duplikat;
-   - porzucenie: `orca orchestration worker-release --dispatch <dispatch> --json` dla rozliczonych workerów, usuń `orca-running`, nadaj `orca-blocked`.
+   - kontynuacja: usuń plik blokady, usuń `orca-running`, nadaj `orca-ready`; następny koordynator wznowi ten sam Run, gałąź i licznik rund zamiast tworzyć duplikat;
+   - porzucenie: `orca orchestration worker-release --dispatch <dispatch> --json` dla rozliczonych workerów, usuń `orca-running`, nadaj `orca-blocked`, usuń plik blokady.
+
+Plik blokady bez żadnego Issue w `orca-running` oznacza awarię koordynatora tuż po przejęciu blokady: sprawdź `orca automations runs` i, jeśli żadna sesja nie trwa, usuń plik.
 
 ## Ograniczenia
 
