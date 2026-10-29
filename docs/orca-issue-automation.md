@@ -41,13 +41,17 @@ Wyłączenie nie przerywa trwającej sesji; ją zamykasz w Orca po sprawdzeniu s
 
 ## Zadanie zawieszone w `orca-running`
 
-Dopóki jakiekolwiek Issue ma `orca-running`, precheck zwraca 2 i nic nowego nie startuje. Gdy stan trwa dłużej niż godzinę:
+Dopóki jakiekolwiek Issue ma `orca-running`, precheck zwraca 2 i nic nowego nie startuje. Koordynator sam pozostawia `orca-running` i zapisuje `phase=stuck`, gdy któregoś workera nie da się rozliczyć. Gdy stan trwa dłużej niż godzinę:
 
-1. W komentarzach Issue znajdź ostatnią linię `ORCA-STATE run=... dispatch=... worktree=... branch=...`.
-2. `orca orchestration worker-list --run <run> --include-remote --json` i `orca automations runs --id 3f6117f2-1c36-4504-8ab0-41234e1ac826 --limit 3 --json`.
-3. Worker `live` lub sesja koordynatora aktywna: czekaj.
-4. Wszystko zakończone lub `exited`, praca warta kontynuacji: usuń `orca-running`, nadaj `orca-ready`. Następny koordynator odczyta `ORCA-STATE`, wznowi ten sam Run i gałąź zamiast tworzyć duplikat.
-5. Praca do porzucenia: usuń `orca-running`, nadaj `orca-blocked`, a terminale zwolnij `orca orchestration worker-release --dispatch <dispatch> --json`.
+1. W komentarzach Issue znajdź ostatnią linię `ORCA-STATE run=... phase=... dispatch=...`.
+2. `orca automations runs --id 3f6117f2-1c36-4504-8ab0-41234e1ac826 --limit 3 --json` — sesja koordynatora nadal aktywna: czekaj.
+3. `orca orchestration worker-list --run <run> --include-remote --json` i dla każdego wiersza `projection.liveness`:
+   - `live`: czekaj.
+   - `unverifiable`: nie zwalniaj, nie zatrzymuj i nie kolejkuj ponownie; sprawdź `orca orchestration worker-show --dispatch <dispatch> --json` i czekaj na `live` albo `exited`.
+   - `exited` bez rozliczenia: wykonaj dokładnie `projection.nextAction`; gdy wskazuje zakończenie, `orca orchestration worker-stop --dispatch <dispatch> --json` (albo `worker-abandon`, gdy procesu nie da się potwierdzić).
+4. Dopiero gdy każdy Dispatch Runu jest rozliczony:
+   - kontynuacja: dodaj komentarz `ORCA-REQUEUE`, usuń `orca-running`, nadaj `orca-ready`; następny koordynator wznowi ten sam Run, gałąź i licznik rund zamiast tworzyć duplikat;
+   - porzucenie: `orca orchestration worker-release --dispatch <dispatch> --json` dla rozliczonych workerów, usuń `orca-running`, nadaj `orca-blocked`.
 
 ## Ograniczenia
 
