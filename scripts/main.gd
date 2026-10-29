@@ -18,7 +18,7 @@ var lifetime_runs: int = 0
 var run_data: Dictionary = {}
 var rng := RandomNumberGenerator.new()
 var content: VBoxContainer
-var notice: String = "Zacznij wyprawe. Szukaj rdzeni zasilajacych baze."
+var notice: String = "Zacznij wyprawę. Szukaj rdzeni zasilających bazę."
 var last_save_time: int = 0
 var current_screen: String = "base"
 var income_timer: Timer
@@ -122,8 +122,8 @@ func _render() -> void:
 
 func _render_base() -> void:
 	_label("BAZA", 33)
-	_panel_text("Kilof: %d   |   Trening: %d   |   Generatory: %d/%d\nNajglebsza warstwa: %d   |   Wyprawy: %d" % [drill, training, generators.size(), int(balance["base"]["generator_slots"]), best_depth, lifetime_runs])
-	_button("ROZPOCZNIJ WYPRAWE", Callable(self, "_start_run"))
+	_panel_text("Kilof: %d   |   Trening: %d   |   Generatory: %d/%d\nNajgłębsza warstwa: %d   |   Wyprawy: %d" % [drill, training, generators.size(), int(balance["base"]["generator_slots"]), best_depth, lifetime_runs])
+	_button("ROZPOCZNIJ WYPRAWĘ", Callable(self, "_start_run"))
 	var drill_cost := _upgrade_cost("drill")
 	var drill_button := _button("Ulepsz kilof (+1 mocy): %d zl" % drill_cost, Callable(self, "_upgrade").bind("drill"))
 	drill_button.disabled = gold < drill_cost
