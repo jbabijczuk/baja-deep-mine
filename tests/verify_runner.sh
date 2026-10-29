@@ -5,13 +5,13 @@ here="$(cd "$(dirname "$0")" && pwd)"
 project="$(cd "$here/.." && pwd)"
 bins=("$@")
 if [ ${#bins[@]} -eq 0 ]; then
-	bins=("${GODOT:-godot}")
+	bins=("${GODOT_BIN:-}")
 fi
 count=${#bins[@]}
 
 for bin in "${bins[@]}"; do
-	if ! timeout 60 "$bin" --headless --version 2>/dev/null | tr -d '\r' | grep -qE "^4\.[0-9]+"; then
-		echo "SETUP ERROR: Godot 4 not runnable: $bin"
+	if ! timeout 60 "$bin" --headless --version 2>/dev/null | tr -d '\r' | grep -qE "^4\.7\."; then
+		echo "SETUP ERROR: Godot 4.7.x not runnable: $bin. Set GODOT_BIN to the Godot 4.7.x console binary."
 		exit 2
 	fi
 done
