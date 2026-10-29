@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "seed": 20261029,
+  "map": {
+    "width": 48,
+    "height": 64,
+    "shaft_x": 14,
+    "station_y": 6,
+    "start_tunnel": 7,
+    "boulder_exclusion": 9,
+    "caves": 9,
+    "lamp_offsets": [[-1, -1], [2, -1], [5, -1]]
+  },
+  "player": {
+    "pick_power": 1,
+    "strength": 2,
+    "capacity": 40,
+    "move_time": 0.16,
+    "dig_interval": 0.22,
+    "stun_seconds": 1.6,
+    "slow_load_fraction": 0.7,
+    "slow_move_multiplier": 1.7
+  },
+  "round": {
+    "active_seconds": 280,
+    "break_seconds": 20,
+    "debug_skip_to": 270
+  },
+  "boulders": {
+    "count": 26,
+    "fall_interval": 0.16,
+    "weights": [1, 1, 2, 3],
+    "demo": {"dx": 6, "dy": -2, "weight": 1}
+  },
+  "materials": {
+    "dirt": {"hp": 1, "label": "Ziemia"},
+    "stone": {"hp": 3, "label": "Kamień"},
+    "coal": {"hp": 2, "label": "Węgiel", "drop": "coal", "drop_min": 2, "drop_max": 3},
+    "copper": {"hp": 3, "label": "Miedź", "drop": "copper", "drop_min": 1, "drop_max": 3},
+    "gold": {"hp": 5, "label": "Złoto", "drop": "gold", "drop_min": 1, "drop_max": 2}
+  },
+  "resources": {
+    "coal": {"label": "Węgiel", "mass": 2, "value": 3},
+    "copper": {"label": "Miedź", "mass": 3, "value": 9},
+    "gold": {"label": "Złoto", "mass": 4, "value": 28}
+  },
+  "layers": [
+    {"until": 14, "weights": {"dirt": 66, "stone": 14, "coal": 14, "copper": 6, "gold": 0}},
+    {"until": 32, "weights": {"dirt": 38, "stone": 30, "coal": 14, "copper": 12, "gold": 6}},
+    {"until": 999, "weights": {"dirt": 18, "stone": 42, "coal": 10, "copper": 16, "gold": 14}}
+  ]
+}
