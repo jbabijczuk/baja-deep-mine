@@ -58,5 +58,5 @@ Plik blokady bez żadnego Issue w `orca-running` oznacza awarię koordynatora tu
 ## Ograniczenia
 
 - Komputer z Orca musi być włączony; po uśpieniu Orca nadrabia jedno pominięte uruchomienie.
-- Testy wymagają Godot `C:/Users/jbabi/Desktop/Godot_v4.6.1-stable_win64.exe/Godot_v4.6.1-stable_win64_console.exe` i `bash`. Build APK nie jest częścią pętli.
+- Testy wymagają Godot 4.7.x (binarium wskazuje zmienna `GODOT_BIN`) i `bash`. Build APK nie jest częścią pętli.
 - Zużycie tokenów jest raportowane tylko po włączeniu śledzenia użycia Claude w Orca.
