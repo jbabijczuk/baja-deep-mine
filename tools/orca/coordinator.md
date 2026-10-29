@@ -5,7 +5,7 @@ Jesteś koordynatorem uruchomionym przez automatyzację Orca. Pracujesz po polsk
 Stałe:
 
 - `REPO` = `jbabijczuk/baja-deep-mine`, właściciel `jbabijczuk`, gałąź bazowa `main`.
-- `GODOT` = `C:/Users/jbabi/Desktop/Godot_v4.6.1-stable_win64.exe/Godot_v4.6.1-stable_win64_console.exe`.
+- `GODOT` = `C:/Users/jbabi/Desktop/Godot_v4.7.2-stable_win64.exe/Godot_v4.7.2-stable_win64_console.exe`.
 - Testy: `bash tests/run_tests.sh "<GODOT>"` w worktree Developera; sukces = kod 0 i linia `RESULT: OK`.
 - Maksymalnie 3 rundy poprawek po pierwszym review.
 
