@@ -7,12 +7,13 @@ const PrototypeScene = preload("res://scenes/MinePrototype.tscn")
 const EntryScene = preload("res://scenes/GameEntry.tscn")
 const RoundSim = preload("res://tests/round_sim.gd")
 const TEST_DIR = "user://dm_proto_tests/"
-const EXPECTED_ASSERTIONS = 238
+const EXPECTED_ASSERTIONS = 243
 const TESTS = [
 	"_test_map_from_seed",
 	"_test_generator_veins_many_seeds",
 	"_test_layout_differs_per_seed",
 	"_test_fresh_seeds_unique",
+	"_test_last_seed_survives_restart",
 	"_test_rounds_regenerate_over_time",
 	"_test_dig_balance",
 	"_test_dig_dirt_and_stone",
@@ -62,6 +63,9 @@ func _initialize() -> void:
 	await process_frame
 	var real_before := _fingerprint(MainScript.SAVE_PATH)
 	var proto_before := _fingerprint(MineModel.SAVE_PATH)
+	var real_seed_store: String = MineModel.seed_store
+	var seed_before := _fingerprint(real_seed_store)
+	MineModel.seed_store = TEST_DIR + "seed.txt"
 	DirAccess.make_dir_recursive_absolute(TEST_DIR)
 	var completed := 0
 	for test_name in TESTS:
@@ -71,6 +75,8 @@ func _initialize() -> void:
 			failures += 1
 			print("FAIL test not completed: ", test_name)
 	_clean_test_dir()
+	MineModel.seed_store = real_seed_store
+	_check(_fingerprint(real_seed_store) == seed_before, "real seed store untouched")
 	_check(_fingerprint(MainScript.SAVE_PATH) == real_before, "real player save untouched")
 	_check(_fingerprint(MineModel.SAVE_PATH) == proto_before, "real prototype progress untouched")
 	if assertions != EXPECTED_ASSERTIONS:
@@ -323,6 +329,32 @@ func _test_fresh_seeds_unique() -> bool:
 	_check(unique, "500 quick restarts draw 500 different seeds")
 	var m = _model(99)
 	_check(m.fresh_seed() != m.seed_value, "fresh seed never repeats current map")
+	return true
+
+func _test_last_seed_survives_restart() -> bool:
+	var original: RandomNumberGenerator = MineModel.seed_source
+	var forced := RandomNumberGenerator.new()
+	forced.seed = 4242
+	var colliding := int(forced.randi())
+	forced.seed = 4242
+	MineModel.seed_source = forced
+	MineModel.last_issued_seed = -1
+	var first = MineModel.new()
+	var issued: int = first.fresh_seed()
+	_check(issued == colliding and MineModel.last_seed() == colliding and MineModel.seed_store.begins_with(TEST_DIR), "issued seed stored in test seed file")
+	forced.seed = 4242
+	MineModel.last_issued_seed = -1
+	var restarted = MineModel.new()
+	_check(MineModel.last_seed() == colliding, "last seed survives model restart")
+	var next: int = restarted.fresh_seed()
+	_check(next != colliding and MineModel.last_seed() == next, "forced RNG collision skips previous game seed")
+	var file := FileAccess.open(MineModel.seed_store, FileAccess.WRITE)
+	file.store_string("{broken")
+	file.close()
+	var broken = MineModel.new()
+	_check(MineModel.last_seed() == -1 and broken.fresh_seed() >= 0, "corrupt seed file ignored")
+	MineModel.seed_source = original
+	MineModel.last_issued_seed = -1
 	return true
 
 func _test_rounds_regenerate_over_time() -> bool:

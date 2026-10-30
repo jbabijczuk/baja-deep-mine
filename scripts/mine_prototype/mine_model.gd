@@ -49,6 +49,8 @@ var round_index: int = 0
 var next_boulder_id: int = 0
 var rng := RandomNumberGenerator.new()
 static var seed_source := _randomized_source()
+static var last_issued_seed: int = -1
+static var seed_store: String = "user://mine_prototype_seed.txt"
 
 func _init(cfg: Dictionary = {}) -> void:
 	config = cfg if not cfg.is_empty() else load_config()
@@ -59,10 +61,21 @@ static func _randomized_source() -> RandomNumberGenerator:
 	return source
 
 func fresh_seed() -> int:
+	var previous := last_seed()
 	var next := seed_value
-	while next == seed_value:
+	while next == seed_value or next == previous or next == last_issued_seed:
 		next = int(seed_source.randi())
+	last_issued_seed = next
+	var file := FileAccess.open(seed_store, FileAccess.WRITE)
+	if file != null:
+		file.store_string(str(next))
 	return next
+
+static func last_seed() -> int:
+	if not FileAccess.file_exists(seed_store):
+		return -1
+	var text := FileAccess.get_file_as_string(seed_store).strip_edges()
+	return int(text) if text.is_valid_int() else -1
 
 static func load_config() -> Dictionary:
 	var parsed = JSON.parse_string(FileAccess.get_file_as_string(DATA_PATH))
