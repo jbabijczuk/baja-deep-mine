@@ -2,7 +2,7 @@ extends SceneTree
 
 const EntryScene = preload("res://scenes/GameEntry.tscn")
 const LegacyScene = preload("res://scenes/legacy/LegacyTextMine.tscn")
-const OUT_DIR = "res://docs/screenshots/"
+const OUT_DIR = "res://docs/screenshots/release-002/"
 const TMP_DIR = "user://release002_capture/"
 
 var vp: SubViewport
