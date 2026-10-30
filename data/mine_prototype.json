@@ -16,13 +16,18 @@
     "pick_power": 1,
     "strength": 2,
     "slots": 3,
-    "heavy_mass": 8,
     "move_time": 0.3,
+    "slow_per_kg": 0.12,
+    "max_slow_multiplier": 2.4,
     "dig_interval": 0.38,
     "stun_seconds": 3.8,
     "stun_guard_seconds": 2.5,
-    "stun_drop_fraction": 0.5,
-    "slow_move_multiplier": 1.6
+    "stun_drop_fraction": 0.5
+  },
+  "elevator": {
+    "up_seconds": 30,
+    "unload_seconds": 2,
+    "down_seconds": 8
   },
   "upgrades": {
     "pick": [{"cost": 25, "power": 2, "label": "Hartowany kilof"}],

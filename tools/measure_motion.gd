@@ -156,8 +156,9 @@ func _run_elevator() -> void:
 	await _frames(10)
 	_begin()
 	await _hold(Vector2i.LEFT, func(): return scene.model.state != "mine", 120)
-	await _settle()
+	await _hold(Vector2i.ZERO, func(): return scene.model.state == "surface", 3000)
 	scene._descend()
+	await _hold(Vector2i.ZERO, func(): return scene.model.state == "mine", 1200)
 	await _settle()
 
 func _report(name: String, run: int) -> void:

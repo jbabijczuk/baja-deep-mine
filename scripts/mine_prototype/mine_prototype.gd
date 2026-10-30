@@ -42,6 +42,12 @@ var surface_panel: PanelContainer
 var surface_title: Label
 var surface_info: Label
 var descend_button: Button
+var ride_panel: PanelContainer
+var ride_title: Label
+var ride_bar: ProgressBar
+var ride_info: Label
+var ride_warn: Label
+var warn_label: Label
 var upgrade_buttons: Dictionary = {}
 var save_path: String = MineModel.SAVE_PATH
 var fade: ColorRect
@@ -355,7 +361,15 @@ func _build_hud() -> void:
 	hint.offset_bottom = -40
 	hud.add_child(hint)
 	mine_controls.append(hint)
+	warn_label = _make_label("", 22, Color("#ff6a4a"))
+	warn_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	warn_label.offset_top = 300
+	warn_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	warn_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	warn_label.visible = false
+	hud.add_child(warn_label)
 	_build_surface_panel()
+	_build_ride_panel()
 	fade = ColorRect.new()
 	fade.color = Color(0, 0, 0, 0)
 	fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -435,6 +449,47 @@ func _build_surface_panel() -> void:
 	base_btn.custom_minimum_size = Vector2(0, 56)
 	box.add_child(base_btn)
 
+func _build_ride_panel() -> void:
+	ride_panel = PanelContainer.new()
+	ride_panel.add_theme_stylebox_override("panel", _panel_style(0.88))
+	ride_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	ride_panel.offset_left = -290
+	ride_panel.offset_right = 290
+	ride_panel.offset_top = 120
+	ride_panel.offset_bottom = 280
+	ride_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ride_panel.visible = false
+	hud.add_child(ride_panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
+	ride_panel.add_child(box)
+	ride_title = _make_label("", 30, Color("#ffd75a"))
+	ride_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(ride_title)
+	ride_bar = ProgressBar.new()
+	ride_bar.custom_minimum_size = Vector2(0, 30)
+	ride_bar.show_percentage = false
+	ride_bar.max_value = 1.0
+	ride_bar.step = 0.0
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0, 0, 0, 0.6)
+	bg.border_color = Color("#8a5a2b")
+	bg.set_border_width_all(2)
+	bg.set_corner_radius_all(8)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color("#e0a050")
+	fill.set_corner_radius_all(8)
+	ride_bar.add_theme_stylebox_override("background", bg)
+	ride_bar.add_theme_stylebox_override("fill", fill)
+	box.add_child(ride_bar)
+	ride_info = _make_label("", 22, Color("#ffe6b8"))
+	ride_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(ride_info)
+	ride_warn = _make_label("", 20, Color("#ff6a4a"))
+	ride_warn.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ride_warn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(ride_warn)
+
 func _process(delta: float) -> void:
 	clock += delta
 	for e in model.tick(delta):
@@ -459,6 +514,7 @@ func _process(delta: float) -> void:
 			elif model.stun_left <= 0.0 and player_sprite.animation != "idle":
 				player_sprite.play("idle")
 	_update_move()
+	_update_ride()
 	_update_effects(delta)
 	_update_diagnostics(delta)
 	_update_hud()
@@ -564,8 +620,11 @@ func apply_step(dir: Vector2i) -> Dictionary:
 	elif action == "blocked":
 		busy = 0.12
 	elif action == "elevator":
-		last_trip_value = int(result["value"])
-		_ride_up()
+		hp_bar.visible = false
+		_move_player(model.elevator_cell(), model.move_time())
+		busy = model.move_time()
+		if result["warn"]:
+			show_toast(_elevator_warning_text())
 	return result
 
 func _move_player(to: Vector2i, duration: float) -> void:
@@ -709,7 +768,18 @@ func _handle_event(e: Dictionary) -> void:
 		show_toast("Głaz odbił się od kasku")
 	elif type == "collapse":
 		shake = 16.0
-		show_toast("ZAWALENIE! Utracono niewyniesiony łup: %d zł" % int(e["lost"]))
+		show_toast(("ZAWALENIE w trakcie wjazdu! Utracono łup z windy: %d zł" if e["in_elevator"] else "ZAWALENIE! Utracono niewyniesiony łup: %d zł") % int(e["lost"]))
+		_collapse_to_surface()
+	elif type == "arrived":
+		last_trip_value = int(e["value"])
+		show_toast("Wyniesiono łup: +%d zł" % last_trip_value)
+	elif type == "descended":
+		cage.position = _cell_center(model.elevator_cell())
+		player_root.position = cage.position
+		_move_player(model.player, model.move_time())
+		busy = model.move_time()
+	elif type == "break" and e["aborted_descent"]:
+		show_toast("Koniec rundy — winda zawróciła na powierzchnię")
 		_collapse_to_surface()
 	elif type == "new_round":
 		_rebuild_boulders()
@@ -718,37 +788,32 @@ func _handle_event(e: Dictionary) -> void:
 		player_root.position = _surface_point()
 		show_toast("Kopalnia odbudowana. Nowa runda!")
 
-func _ride_up() -> void:
-	animating = true
-	hp_bar.visible = false
-	player_sprite.play("idle")
-	var t := create_tween()
-	_tween_pixels(t, player_root, player_root.position, _cell_center(model.elevator_cell()), model.move_time())
-	t.tween_interval(0.25)
-	t.set_parallel(true)
-	_tween_pixels(t, cage, _cell_center(model.elevator_cell()), _surface_point(), 1.6).set_trans(Tween.TRANS_SINE)
-	_tween_pixels(t, player_root, _cell_center(model.elevator_cell()), _surface_point(), 1.6).set_trans(Tween.TRANS_SINE)
-	t.chain().tween_callback(func():
-		animating = false
-		show_toast("Wyniesiono łup: +%d zł" % last_trip_value))
-
 func _descend() -> void:
 	if animating or not model.descend():
 		return
-	animating = true
 	surface_panel.visible = false
-	player_root.position = _surface_point()
-	cage.position = _surface_point()
-	var t := create_tween()
-	t.set_parallel(true)
-	_tween_pixels(t, cage, _surface_point(), _cell_center(model.elevator_cell()), 1.6).set_trans(Tween.TRANS_SINE)
-	_tween_pixels(t, player_root, _surface_point(), _cell_center(model.elevator_cell()), 1.6).set_trans(Tween.TRANS_SINE)
-	t.chain()
-	_tween_pixels(t, player_root, _cell_center(model.elevator_cell()), _cell_center(model.player), model.move_time())
-	t.chain().tween_callback(func(): animating = false)
 
-func _tween_pixels(t: Tween, node: Node2D, from: Vector2, to: Vector2, duration: float) -> MethodTweener:
-	return t.tween_method(func(p: Vector2): node.position = p.round(), from, to, duration)
+func _update_ride() -> void:
+	var station := _cell_center(model.elevator_cell())
+	var surface := _surface_point()
+	var p: float = model.elevator_progress()
+	if model.state == "ascending":
+		cage.position = station.lerp(surface, p).round()
+	elif model.state == "descending":
+		cage.position = surface.lerp(station, p).round()
+	elif model.state == "unloading" or model.state == "surface":
+		cage.position = surface
+	else:
+		return
+	if moving:
+		move_to = cage.position
+	else:
+		player_root.position = cage.position
+		if player_sprite.animation != "idle":
+			player_sprite.play("idle")
+
+func _elevator_warning_text() -> String:
+	return "Winda jedzie %d s. Nie zdążysz przed zawaleniem!" % int(model.config["elevator"]["up_seconds"])
 
 func _collapse_to_surface() -> void:
 	animating = true
@@ -810,11 +875,14 @@ func _update_hud() -> void:
 		var warn := left <= 20.0 and int(clock * 4.0) % 2 == 0
 		timer_label.add_theme_color_override("font_color", Color("#ff6a4a") if warn else Color("#ffe6b8"))
 	var full: bool = model.free_slots() == 0
-	pack_label.text = "PLECAK %d/%d%s  •  %d kg  •  %d zł%s" % [model.backpack_count(), model.slots(), " PEŁNY" if full else "", model.backpack_mass(), model.backpack_value(), "  •  CIĘŻKO!" if model.is_heavy() else ""]
+	pack_label.text = "PLECAK %d/%d%s  •  %d kg  •  %d zł%s" % [model.backpack_count(), model.slots(), " PEŁNY" if full else "", model.backpack_mass(), model.backpack_value(), "  •  WOLNIEJ ×%.2f" % model.move_multiplier() if model.move_multiplier() > 1.0 else ""]
 	pack_label.add_theme_color_override("font_color", Color("#ff9a6a") if full else Color("#c9b49a"))
 	_update_slots()
 	banked_label.text = "%d zł" % model.banked_value
-	surface_panel.visible = model.state != "mine" and not animating
+	surface_panel.visible = (model.state == "surface" or model.state == "break") and not animating
+	_update_ride_panel()
+	warn_label.visible = model.elevator_warning()
+	warn_label.text = _elevator_warning_text()
 	for control in mine_controls:
 		control.visible = model.state == "mine"
 	if model.state != "mine":
@@ -836,6 +904,25 @@ func _update_hud() -> void:
 		else:
 			btn.text = "KUP: %s — %d zł" % [String(upgrade["label"]).to_upper(), int(upgrade["cost"])]
 			btn.disabled = model.banked_value < int(upgrade["cost"])
+
+func _update_ride_panel() -> void:
+	var titles := {"ascending": "WINDA JEDZIE W GÓRĘ", "unloading": "ROZŁADUNEK", "descending": "ZJAZD W DÓŁ"}
+	ride_panel.visible = titles.has(model.state)
+	if not ride_panel.visible:
+		return
+	ride_title.text = titles[model.state]
+	ride_bar.value = model.elevator_progress()
+	var left: float = model.elevator_left()
+	if model.state == "ascending":
+		ride_info.text = "Na powierzchni za %.0f s  •  łup %d zł" % [ceilf(left), model.backpack_value()]
+		ride_warn.text = "Zawalenie przed dojazdem — łup przepadnie!" if model.time_left() < left else ""
+	elif model.state == "unloading":
+		ride_info.text = "Łup w skarbcu: +%d zł  •  panel za %.0f s" % [last_trip_value, ceilf(left)]
+		ride_warn.text = ""
+	else:
+		ride_info.text = "W kopalni za %.0f s" % ceilf(left)
+		ride_warn.text = ""
+	ride_warn.visible = ride_warn.text != ""
 
 func _update_slots() -> void:
 	if slot_icons.size() != model.slots():

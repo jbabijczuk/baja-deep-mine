@@ -6,7 +6,7 @@ const MainScene = preload("res://scenes/Main.tscn")
 const PrototypeScene = preload("res://scenes/MinePrototype.tscn")
 const RoundSim = preload("res://tests/round_sim.gd")
 const TEST_DIR = "user://dm_proto_tests/"
-const EXPECTED_ASSERTIONS = 157
+const EXPECTED_ASSERTIONS = 199
 const TESTS = [
 	"_test_map_from_seed",
 	"_test_generator_veins_many_seeds",
@@ -21,7 +21,13 @@ const TESTS = [
 	"_test_full_backpack_leaves_loot_on_map",
 	"_test_boulder_falls_stuns_and_push",
 	"_test_stun_drops_loot_and_guard",
+	"_test_mass_slowdown_table",
 	"_test_elevator_return",
+	"_test_elevator_banks_only_on_arrival",
+	"_test_elevator_round_boundaries",
+	"_test_round_ends_during_unload_and_descent",
+	"_test_elevator_lag_no_duplicate",
+	"_test_round_sim_two_trips",
 	"_test_multiple_deposits_one_round",
 	"_test_upgrades_persist_between_rounds",
 	"_test_progress_save_and_restart",
@@ -35,6 +41,7 @@ const TESTS = [
 	"_test_stun_and_block_keep_position",
 	"_test_collapse_stops_move",
 	"_test_elevator_ride_whole_pixels",
+	"_test_mass_change_keeps_current_move",
 	"_test_diagnostics_overlay",
 	"_test_base_navigation_button",
 ]
@@ -279,7 +286,7 @@ func _test_move_tempo_and_weight() -> bool:
 	var p: Dictionary = m.config["player"]
 	_check(float(p["move_time"]) >= 0.28 and float(p["move_time"]) <= 0.32 and is_equal_approx(m.move_time(), float(p["move_time"])), "base move about 0.30 s per cell")
 	m.backpack = {"gold": 2}
-	_check(m.is_heavy() and is_equal_approx(m.move_time(), float(p["move_time"]) * float(p["slow_move_multiplier"])) and m.move_time() > float(p["move_time"]), "heavy miner moves slower")
+	_check(not p.has("heavy_mass") and not p.has("slow_move_multiplier") and is_equal_approx(m.move_time(), float(p["move_time"]) * 1.96), "8 kg uses only the per-kg slowdown")
 	var target: Vector2i = m.player + Vector2i.DOWN
 	m._set_cell(target.x, target.y, MineModel.DIRT)
 	_check(is_equal_approx(RoundSim.enter_cost(m, target), 2.0 * float(p["dig_interval"]) + m.move_time()), "dirt cell costs two full dig intervals plus a step")
@@ -341,11 +348,11 @@ func _test_slots_and_mass() -> bool:
 	var r: Dictionary = _break(m, Vector2i.DOWN)
 	_check(r["action"] == "break" and r["drops"] == {"copper": 1} and m.backpack_count() == 1, "one block gives exactly one unit")
 	_check(m.backpack_mass() == 3 and m.backpack_value() == 9, "mass and value tracked per unit")
-	_check(not m.is_heavy() and is_equal_approx(m.move_time(), float(m.config["player"]["move_time"])), "light load keeps base speed")
+	_check(is_equal_approx(m.move_time(), 0.3 * 1.36), "first nugget already slows the miner")
 	m.backpack = {"coal": 3}
-	_check(m.free_slots() == 0 and not m.is_heavy(), "3 coal fill slots but stay light")
+	_check(m.free_slots() == 0 and is_equal_approx(m.move_time(), 0.516), "3 coal fill slots and slow to 0.516 s")
 	m.backpack = {"gold": 2}
-	_check(m.free_slots() == 1 and m.is_heavy() and m.move_time() > float(m.config["player"]["move_time"]), "2 gold leave a slot but slow the miner")
+	_check(m.free_slots() == 1 and m.move_time() > float(m.config["player"]["move_time"]), "2 gold leave a slot but slow the miner")
 	return true
 
 func _test_full_backpack_leaves_loot_on_map() -> bool:
@@ -449,15 +456,158 @@ func _test_stun_drops_loot_and_guard() -> bool:
 	_check(e[0]["type"] == "hit_player" and g.stun_left > 0.0, "new hit after guard stuns again")
 	return true
 
+func _test_mass_slowdown_table() -> bool:
+	var m = _model()
+	var cases := [[{}, 0, 0.300], [{"coal": 1}, 2, 0.372], [{"coal": 3}, 6, 0.516], [{"copper": 3}, 9, 0.624], [{"gold": 3}, 12, 0.720]]
+	var table_ok := true
+	for c in cases:
+		m.backpack = c[0]
+		table_ok = table_ok and m.backpack_mass() == c[1] and absf(m.move_time() - c[2]) < 0.0005
+	_check(table_ok, "cell time 0/2/6/9/12 kg = 0.300/0.372/0.516/0.624/0.720 s")
+	m.backpack = {"gold": 5}
+	_check(is_equal_approx(m.move_multiplier(), float(m.config["player"]["max_slow_multiplier"])), "slowdown capped at 2.4x")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 5
+	var monotonic := true
+	for _n in range(200):
+		var pack := {}
+		for res in ["coal", "copper", "gold"]:
+			pack[res] = rng.randi_range(0, 2)
+		m.backpack = pack
+		var before: float = m.move_time()
+		var res: String = ["coal", "copper", "gold"][rng.randi_range(0, 2)]
+		m.backpack[res] = int(m.backpack[res]) + 1
+		monotonic = monotonic and m.move_time() >= before
+	_check(monotonic, "more mass never makes the miner faster")
+	m.backpack = {"gold": 3}
+	m.try_step(Vector2i.LEFT)
+	m.tick(float(m.config["elevator"]["up_seconds"]))
+	_check(m.backpack.is_empty() and is_equal_approx(m.move_time(), 0.3), "full speed again after unloading")
+	return true
+
 func _test_elevator_return() -> bool:
 	var m = _model()
+	var e: Dictionary = m.config["elevator"]
+	_check(is_equal_approx(float(e["up_seconds"]), 30.0) and is_equal_approx(float(e["unload_seconds"]), 2.0) and is_equal_approx(float(e["down_seconds"]), 8.0), "elevator config 30/2/8 s")
 	m.backpack = {"copper": 2, "gold": 1}
 	var r: Dictionary = m.try_step(Vector2i.LEFT)
-	_check(r["action"] == "elevator" and int(r["value"]) == 46, "elevator carries loot up")
-	_check(m.state == "surface" and m.banked_value == 46 and m.backpack.is_empty(), "loot banked once on surface")
-	_check(m.try_step(Vector2i.RIGHT)["action"] == "none", "no mining on surface")
-	_check(m.ride_up() == 0 and m.banked_value == 46, "second ride does not duplicate loot")
-	_check(m.descend() and m.state == "mine" and m.player == m.start_cell(), "descend back to station")
+	_check(r["action"] == "elevator" and int(r["value"]) == 46 and not r["warn"], "elevator carries loot up")
+	_check(m.state == "ascending" and m.banked_value == 0 and m.backpack_value() == 46, "nothing banked when the ride starts")
+	_check(m.try_step(Vector2i.RIGHT)["action"] == "none" and not m.descend() and not m.buy("pick")["ok"], "no control during ascent")
+	var events: Array = m.tick(30.0)
+	_check(events.size() == 1 and events[0]["type"] == "arrived" and int(events[0]["value"]) == 46, "arrival reported once")
+	_check(m.state == "unloading" and m.banked_value == 46 and m.backpack.is_empty(), "loot banked once on arrival")
+	m.tick(2.0)
+	_check(m.state == "surface" and m.try_step(Vector2i.RIGHT)["action"] == "none", "no mining on surface")
+	_check(m.descend() and m.state == "descending" and not m.descend(), "descent starts once")
+	m.tick(8.0)
+	_check(m.state == "mine" and m.player == m.start_cell() and m.banked_value == 46 and is_equal_approx(m.round_time, 40.0), "back at station after 30+2+8 s")
+	return true
+
+func _test_elevator_banks_only_on_arrival() -> bool:
+	var path := TEST_DIR + "ride_bank.json"
+	var m = _model()
+	m.load_progress(path)
+	m.backpack = {"copper": 2, "gold": 1}
+	m.try_step(Vector2i.LEFT)
+	_check(m.banked_value == 0 and not FileAccess.file_exists(path), "no bank and no save at ride start")
+	var events: Array = []
+	for _n in range(299):
+		events += m.tick(0.1)
+	_check(m.state == "ascending" and m.banked_value == 0 and events.is_empty(), "no bank before 30 s")
+	_check(m.round_time > 29.8 and m.elevator_progress() > 0.99, "round clock runs during ascent")
+	m.save_progress()
+	var mid = _model()
+	mid.load_progress(path)
+	_check(mid.banked_value == 0, "save during ride grants nothing")
+	events += m.tick(0.2)
+	_check(events.size() == 1 and events[0]["type"] == "arrived" and m.banked_value == 46, "bank exactly once at 30 s")
+	var after = _model()
+	after.load_progress(path)
+	_check(after.banked_value == 46, "arrival saves bank")
+	m.tick(1.8)
+	_check(not m.descend() and m.state == "unloading", "no descent while unloading")
+	events = m.tick(0.2)
+	_check(m.state == "surface" and events.size() == 1 and events[0]["type"] == "unloaded", "surface panel after 2 s unload")
+	var start_down: float = m.round_time
+	m.descend()
+	m.tick(7.9)
+	_check(m.state == "descending" and m.round_time > start_down + 7.8, "still descending before 8 s, clock runs")
+	events = m.tick(0.2)
+	_check(m.state == "mine" and events.size() == 1 and events[0]["type"] == "descended", "descent finishes after 8 s")
+	return true
+
+func _ride_with_left(left: float) -> Dictionary:
+	var m = _model()
+	m.round_time = float(m.config["round"]["active_seconds"]) - left
+	m.backpack = {"copper": 2, "gold": 1}
+	var warn: bool = m.elevator_warning()
+	var r: Dictionary = m.try_step(Vector2i.LEFT)
+	var events: Array = []
+	for _n in range(int(left * 60.0) + 120):
+		events += m.tick(1.0 / 60.0)
+	events += m.tick(float(m.config["round"]["break_seconds"]))
+	var types: Array = events.map(func(e): return e["type"])
+	return {"m": m, "warn": warn, "ride_warn": r["warn"], "types": types}
+
+func _test_elevator_round_boundaries() -> bool:
+	var a: Dictionary = _ride_with_left(35.0)
+	_check(not a["warn"] and not a["ride_warn"] and a["m"].banked_value == 46 and a["m"].lost_value == 0 and a["types"].count("arrived") == 1, "35 s left: no warning, deposit")
+	var b: Dictionary = _ride_with_left(30.0)
+	_check(not b["warn"] and not b["ride_warn"] and b["m"].banked_value == 46 and b["m"].lost_value == 0 and b["types"].count("arrived") == 1 and not b["types"].has("collapse"), "30 s left: arrival on the boundary deposits")
+	var c: Dictionary = _ride_with_left(29.9)
+	_check(c["warn"] and c["ride_warn"] and c["m"].banked_value == 0 and c["m"].lost_value == 46 and not c["types"].has("arrived") and c["types"].has("collapse"), "29.9 s left: warning, loot lost in elevator")
+	_check(c["m"].round_index == 1 and c["m"].state == "surface" and c["m"].banked_value == 0, "no late deposit after the break")
+	var m = _model()
+	m.round_time = 270.0
+	m.backpack = {"coal": 1}
+	m.try_step(Vector2i.LEFT)
+	var events: Array = m.tick(10.0)
+	_check(events.size() == 1 and events[0]["type"] == "collapse" and events[0]["in_elevator"] and int(events[0]["lost"]) == 3 and m.state == "break", "collapse during ascent loses cargo")
+	events = m.tick(15.0)
+	_check(events.is_empty() and m.banked_value == 0 and m.backpack.is_empty(), "elevator never finishes after collapse")
+	return true
+
+func _test_round_ends_during_unload_and_descent() -> bool:
+	var m = _model()
+	m.round_time = 249.0
+	m.backpack = {"gold": 1}
+	m.try_step(Vector2i.LEFT)
+	var events: Array = m.tick(31.5)
+	_check(events.size() == 2 and events[0]["type"] == "arrived" and events[1]["type"] == "break" and m.state == "break", "round ends during unload")
+	_check(m.banked_value == 28 and m.lost_value == 0 and not m.descend(), "unload keeps bank, no descent in break")
+	var d = _model()
+	d.round_time = 275.0
+	d.state = "surface"
+	_check(d.descend() and d.state == "descending", "descent started late")
+	events = d.tick(10.0)
+	_check(events.size() == 1 and events[0]["type"] == "break" and events[0]["aborted_descent"] and d.state == "break", "round end aborts descent")
+	_check(d.try_step(Vector2i.RIGHT)["action"] == "none" and d.tick(5.0).is_empty() and d.state == "break", "mining stays locked after aborted descent")
+	return true
+
+func _test_elevator_lag_no_duplicate() -> bool:
+	var m = _model()
+	m.backpack = {"copper": 2, "gold": 1}
+	m.try_step(Vector2i.LEFT)
+	var events: Array = m.tick(31.0)
+	events += m.tick(0.0)
+	m.try_step(Vector2i.LEFT)
+	m.descend()
+	events += m.tick(1.5)
+	_check(events.map(func(e): return e["type"]) == ["arrived", "unloaded"] and m.banked_value == 46, "31 s frame banks once")
+	var big = _model()
+	big.backpack = {"copper": 2, "gold": 1}
+	big.try_step(Vector2i.LEFT)
+	events = big.tick(500.0)
+	_check(events.map(func(e): return e["type"]) == ["arrived", "unloaded", "break", "new_round"] and big.banked_value == 46 and big.state == "surface" and is_equal_approx(big.round_time, 200.0), "500 s frame runs every phase once")
+	return true
+
+func _test_round_sim_two_trips() -> bool:
+	var worst := 99
+	for seed_value in RoundSim.SEEDS:
+		var r: Dictionary = RoundSim.simulate_round(_model(seed_value))
+		worst = mini(worst, r["deliveries"].size())
+	_check(worst >= 2, "known-map round fits at least 2 elevator deliveries (worst %d)" % worst)
 	return true
 
 func _test_multiple_deposits_one_round() -> bool:
@@ -465,15 +615,17 @@ func _test_multiple_deposits_one_round() -> bool:
 	m.tick(30.0)
 	m.backpack = {"coal": 3}
 	m.try_step(Vector2i.LEFT)
-	var t1: float = m.round_time
-	_check(m.state == "surface" and m.banked_value == 9 and is_equal_approx(t1, 30.0), "first deposit keeps round clock running")
-	m.tick(5.0)
-	_check(m.descend() and m.state == "mine" and is_equal_approx(m.time_left(), 245.0), "descend again in the same round")
+	m.tick(32.0)
+	_check(m.state == "surface" and m.banked_value == 9 and is_equal_approx(m.round_time, 62.0), "first deposit keeps round clock running")
+	m.descend()
+	m.tick(8.0)
+	_check(m.state == "mine" and is_equal_approx(m.time_left(), 210.0), "descend again in the same round")
 	var target: Vector2i = m.player + Vector2i.DOWN
 	m._set_cell(target.x, target.y, MineModel.COPPER)
 	_break(m, Vector2i.DOWN)
 	m.backpack["coal"] = 2
 	m.try_step(Vector2i.LEFT)
+	m.tick(30.0)
 	_check(m.banked_value == 9 + 9 + 6 and m.round_index == 0, "second deposit adds to bank in same round")
 	m.tick(m.time_left())
 	_check(m.state == "break" and not m.descend(), "no descent after active phase ends")
@@ -493,6 +645,7 @@ func _test_upgrades_persist_between_rounds() -> bool:
 	m.banked_value = 1000
 	_check(not m.buy("pick")["ok"] and m.pick_level == 0 and m.banked_value == 1000, "no shopping inside the mine")
 	m.try_step(Vector2i.LEFT)
+	m.tick(32.0)
 	m.banked_value = pick_cost - 1
 	var r: Dictionary = m.buy("pick")
 	_check(not r["ok"] and r["reason"] == "funds" and m.pick_level == 0 and m.banked_value == pick_cost - 1, "purchase verified against funds before granting")
@@ -513,11 +666,12 @@ func _test_progress_save_and_restart() -> bool:
 	_check(m.banked_value == 0 and m.pick_level == 0, "missing save starts fresh")
 	m.backpack = {"gold": 2}
 	m.try_step(Vector2i.LEFT)
+	m.tick(32.0)
 	m.buy("pick")
 	var restarted = _model()
 	restarted.load_progress(path)
 	_check(restarted.banked_value == 56 - 25 and restarted.pick_level == 1 and restarted.backpack_level == 0, "bank and pick level survive restart")
-	_check(restarted.backpack.is_empty() and restarted.ride_up() == 0 and restarted.banked_value == 31, "restart does not duplicate loot")
+	_check(restarted.backpack.is_empty() and restarted.state == "mine" and restarted.tick(40.0).is_empty() and restarted.banked_value == 31, "restart does not duplicate loot")
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	file.store_string("{broken")
 	file.close()
@@ -628,7 +782,7 @@ func _test_scene_dig_and_walk_rhythm() -> bool:
 	_check(r["action"] == "move" and is_equal_approx(scene.busy, m.move_time()) and scene.player_sprite.animation == "walk" and is_equal_approx(_anim_seconds(scene), m.move_time()), "walk cycle spans one cell move")
 	m.backpack = {"gold": 2}
 	r = scene.apply_step(Vector2i.UP)
-	_check(r["action"] == "move" and is_equal_approx(scene.busy, float(p["move_time"]) * float(p["slow_move_multiplier"])) and is_equal_approx(_anim_seconds(scene), scene.busy), "heavy walk is slower and animation follows")
+	_check(r["action"] == "move" and is_equal_approx(scene.busy, float(p["move_time"]) * 1.96) and is_equal_approx(_anim_seconds(scene), scene.busy), "heavy walk is slower and animation follows")
 	scene.queue_free()
 	await process_frame
 	return true
@@ -768,20 +922,26 @@ func _test_collapse_stops_move() -> bool:
 	await process_frame
 	return true
 
-func _elevator_frames(scene) -> Dictionary:
+func _ride_frames(scene, seconds: float, fps: float = 60.0) -> Dictionary:
 	var off := 0
 	var max_step := 0.0
+	var reverse := 0
 	var last: Vector2 = scene.player_root.position
-	var frames := 0
-	while scene.animating and frames < 600:
-		await process_frame
-		frames += 1
+	var start_y: float = scene.cage.position.y
+	var dir := 0.0
+	for _n in range(int(round(seconds * fps))):
+		scene._process(1.0 / fps)
 		var pos: Vector2 = scene.player_root.position
 		if pos != pos.round() or scene.cage.position != scene.cage.position.round():
 			off += 1
+		var dy: float = pos.y - last.y
+		if dir == 0.0 and dy != 0.0:
+			dir = signf(dy)
+		if dy * dir < 0.0:
+			reverse += 1
 		max_step = maxf(max_step, pos.distance_to(last))
 		last = pos
-	return {"off": off, "max_step": max_step, "frames": frames}
+	return {"off": off, "max_step": max_step, "reverse": reverse, "moved": absf(scene.cage.position.y - start_y)}
 
 func _test_elevator_ride_whole_pixels() -> bool:
 	var scene: Node2D = PrototypeScene.instantiate()
@@ -789,13 +949,53 @@ func _test_elevator_ride_whole_pixels() -> bool:
 	root.add_child(scene)
 	await process_frame
 	scene.input_enabled = false
+	var m = scene.model
+	m.backpack = {"copper": 2, "gold": 1}
 	_check(scene.apply_step(Vector2i.LEFT)["action"] == "elevator", "step into elevator starts ride")
-	var up: Dictionary = await _elevator_frames(scene)
-	_check(up["frames"] > 60 and up["off"] == 0 and up["max_step"] < scene.CELL * 0.5, "ride up keeps miner and cage on whole pixels without teleport")
-	_check(scene.player_root.position == scene._surface_point() and scene.cage.position == scene._surface_point(), "ride ends exactly at surface point")
+	var half: Dictionary = _ride_frames(scene, 14.5)
+	_check(scene.ride_panel.visible and scene.ride_title.text == "WINDA JEDZIE W GÓRĘ" and absf(scene.ride_bar.value - 14.5 / 30.0) < 0.02 and scene.ride_info.text.begins_with("Na powierzchni za 16 s"), "ride panel shows progress and remaining time")
+	_check(half["moved"] > 100.0 and m.banked_value == 0 and scene.banked_label.text == "0 zł" and not scene.surface_panel.visible and scene.player_sprite.animation == "idle", "cage halfway up with idle miner, nothing banked yet")
+	var rest: Dictionary = _ride_frames(scene, 15.6)
+	_check(half["off"] + rest["off"] == 0 and half["reverse"] + rest["reverse"] == 0 and maxf(half["max_step"], rest["max_step"]) < 4.0, "ride up is smooth on whole pixels")
+	_check(m.state == "unloading" and m.banked_value == 46 and scene.player_root.position == scene._surface_point() and scene.cage.position == scene._surface_point(), "ride ends exactly at surface point and banks")
+	_ride_frames(scene, 0.1)
+	_check(scene.ride_title.text == "ROZŁADUNEK" and not scene.surface_panel.visible, "unload panel before surface panel")
+	_ride_frames(scene, 2.0)
+	_check(m.state == "surface" and scene.surface_panel.visible and not scene.ride_panel.visible, "surface panel after unload")
 	scene._descend()
-	var down: Dictionary = await _elevator_frames(scene)
-	_check(down["frames"] > 60 and down["off"] == 0 and scene.player_root.position == scene._cell_center(scene.model.player), "descent keeps whole pixels and ends in tile center")
+	var down: Dictionary = _ride_frames(scene, 8.0 + m.move_time() + 0.1)
+	_check(m.state == "mine" and down["off"] == 0 and down["max_step"] < 6.0 and scene.player_root.position == scene._cell_center(m.player), "descent keeps whole pixels and ends in tile center")
+	m.round_time = 260.0
+	scene._process(0.0)
+	_check(scene.warn_label.visible and scene.warn_label.text == "Winda jedzie 30 s. Nie zdążysz przed zawaleniem!", "warning under 30 s left")
+	m.round_time = 0.0
+	m.backpack = {"coal": 1}
+	scene.apply_step(Vector2i.LEFT)
+	scene._process(12.0)
+	scene._process(25.0)
+	_check(m.banked_value == 49 and m.state == "surface" and scene.cage.position == scene._surface_point(), "lag frames do not duplicate deposit")
+	scene.queue_free()
+	await process_frame
+	return true
+
+func _test_mass_change_keeps_current_move() -> bool:
+	var scene = await _open_scene("mass_change.json")
+	scene.input_enabled = false
+	var m = scene.model
+	m.backpack = {"gold": 3}
+	scene.apply_step(Vector2i.RIGHT)
+	_check(is_equal_approx(scene.busy, 0.72) and is_equal_approx(scene.move_duration, 0.72), "12 kg step takes 0.72 s")
+	scene._process(0.2)
+	var mid: Vector2 = scene.player_root.position
+	scene.drop_cheapest()
+	scene.drop_cheapest()
+	scene.drop_cheapest()
+	scene._process(0.01)
+	_check(m.backpack.is_empty() and scene.moving and is_equal_approx(scene.move_duration, 0.72) and scene.player_root.position.distance_to(mid) < 3.0, "emptying pack keeps current move, no teleport")
+	scene._process(0.6)
+	_check(not scene.moving and scene.player_root.position == scene._cell_center(m.player), "current move finishes in center")
+	scene.apply_step(Vector2i.RIGHT)
+	_check(is_equal_approx(scene.busy, 0.3), "next step back at full speed")
 	scene.queue_free()
 	await process_frame
 	return true

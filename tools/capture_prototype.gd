@@ -62,6 +62,7 @@ func _initialize() -> void:
 	await _open()
 	scene.model.backpack = {"copper": 2, "gold": 1}
 	await _go(Vector2i.LEFT, 1)
+	scene._process(32.0)
 	await _frames(150)
 	_save("dm121_08_surface_upgrades.png")
 	scene.buy_upgrade("pick")

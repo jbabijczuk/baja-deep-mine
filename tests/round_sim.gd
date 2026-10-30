@@ -15,6 +15,11 @@ func _initialize() -> void:
 				var r := simulate(copy, 3 if ore == 0 else 1, 1.0, ore)
 				line += " %s: first=%.1f trips=%s" % ["any" if ore == 0 else MineModel.MATERIAL_NAMES[ore], r["first_ore"], r["trips"].map(func(t): return snappedf(t, 0.1))]
 			print(line)
+	for seed_value in SEEDS:
+		var copy = MineModel.new()
+		copy.generate(seed_value)
+		var r := simulate_round(copy)
+		print("ROUND seed=%d deliveries=%d value=%d idle=%.1f %s" % [seed_value, r["deliveries"].size(), r["deliveries"].reduce(func(a, d): return a + int(d["value"]), 0), r["idle"], r["deliveries"].map(func(d): return "walk=%.1f arrive=%.1f %dzł %dkg %s" % [d["walk"], d["arrive"], d["value"], d["mass"], d["ores"]])])
 	quit()
 
 static func simulate(m, nuggets: int, break_factor: float = 1.0, ore: int = 0) -> Dictionary:
@@ -39,6 +44,24 @@ static func simulate(m, nuggets: int, break_factor: float = 1.0, ore: int = 0) -
 			first_ore = elapsed
 		trips.append(elapsed + float(_route(m, pos, m.elevator_cell(), break_factor)["cost"]))
 	return {"first_ore": first_ore, "trips": trips, "ores": ores}
+
+static func simulate_round(m) -> Dictionary:
+	var e: Dictionary = m.config["elevator"]
+	var active := float(m.config["round"]["active_seconds"])
+	var clock := 0.0
+	var deliveries: Array = []
+	while true:
+		var r := simulate(m, m.slots())
+		if r["trips"].size() < m.slots():
+			break
+		var arrive: float = clock + float(r["trips"].back()) + float(e["up_seconds"])
+		if arrive > active:
+			break
+		deliveries.append({"walk": float(r["trips"].back()), "arrive": arrive, "value": m.backpack_value(), "mass": m.backpack_mass(), "ores": r["ores"]})
+		m.backpack.clear()
+		m.player = m.start_cell()
+		clock = arrive + float(e["unload_seconds"]) + float(e["down_seconds"])
+	return {"deliveries": deliveries, "idle": maxf(0.0, active - clock)}
 
 static func enter_cost(m, pos: Vector2i, break_factor: float = 1.0) -> float:
 	var t: int = m.cell_at(pos)

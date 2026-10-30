@@ -43,6 +43,8 @@ var backpack_level: int = 0
 var save_path: String = ""
 var state: String = "mine"
 var round_time: float = 0.0
+var elevator_from: float = 0.0
+var elevator_until: float = 0.0
 var round_index: int = 0
 var next_boulder_id: int = 0
 var rng := RandomNumberGenerator.new()
@@ -251,7 +253,7 @@ func next_upgrade(kind: String) -> Dictionary:
 	return levels[level] if level < levels.size() else {}
 
 func buy(kind: String) -> Dictionary:
-	if state == "mine" or not config["upgrades"].has(kind):
+	if not (state == "surface" or state == "break") or not config["upgrades"].has(kind):
 		return {"ok": false, "reason": "unavailable"}
 	var upgrade := next_upgrade(kind)
 	if upgrade.is_empty():
@@ -328,8 +330,9 @@ func try_step(dir: Vector2i) -> Dictionary:
 	if t == ELEVATOR:
 		var from_cell := player
 		player = target
-		var value := ride_up()
-		return {"action": "elevator", "from": from_cell, "value": value}
+		var warn := elevator_warning()
+		_start_elevator("ascending", "up_seconds")
+		return {"action": "elevator", "from": from_cell, "value": backpack_value(), "warn": warn}
 	return {"action": "blocked", "reason": "bedrock"}
 
 func _hit(target: Vector2i) -> Dictionary:
@@ -433,32 +436,63 @@ func tick(delta: float) -> Array:
 	var events: Array = []
 	stun_left = maxf(0.0, stun_left - delta)
 	stun_guard_left = maxf(0.0, stun_guard_left - delta)
-	round_time += delta
-	var active := float(config["round"]["active_seconds"])
-	if state != "break" and round_time >= active:
-		if state == "mine":
-			var value := backpack_value()
-			lost_value += value
-			backpack.clear()
-			events.append({"type": "collapse", "lost": value})
-		else:
-			events.append({"type": "break"})
-		state = "break"
-	if state == "break" and round_time >= active + float(config["round"]["break_seconds"]):
-		round_index += 1
-		generate(seed_value + 7919)
-		round_time = 0.0
-		state = "surface"
-		events.append({"type": "new_round", "round": round_index})
+	var end := round_time + delta
+	var boundary := _next_boundary()
+	while boundary <= end:
+		round_time = boundary
+		end -= _advance(events)
+		boundary = _next_boundary()
+	round_time = end
 	return events
 
-func ride_up() -> int:
+func _next_boundary() -> float:
+	var active := float(config["round"]["active_seconds"])
+	if state == "break":
+		return active + float(config["round"]["break_seconds"])
+	if state == "ascending" or state == "unloading" or state == "descending":
+		return minf(elevator_until, active)
+	return active
+
+func _advance(events: Array) -> float:
+	if state == "ascending" and round_time >= elevator_until:
+		events.append({"type": "arrived", "value": _bank_backpack()})
+		_start_elevator("unloading", "unload_seconds")
+	elif state == "unloading" and round_time >= elevator_until:
+		state = "surface"
+		events.append({"type": "unloaded"})
+	elif state == "descending" and round_time >= elevator_until:
+		player = start_cell()
+		facing = Vector2i.RIGHT
+		state = "mine"
+		events.append({"type": "descended"})
+	elif state == "break":
+		round_index += 1
+		generate(seed_value + 7919)
+		state = "surface"
+		events.append({"type": "new_round", "round": round_index})
+		return float(config["round"]["active_seconds"]) + float(config["round"]["break_seconds"])
+	elif state == "mine" or state == "ascending":
+		var value := backpack_value()
+		lost_value += value
+		backpack.clear()
+		events.append({"type": "collapse", "lost": value, "in_elevator": state == "ascending"})
+		state = "break"
+	else:
+		events.append({"type": "break", "aborted_descent": state == "descending"})
+		state = "break"
+	return 0.0
+
+func _start_elevator(next_state: String, key: String) -> void:
+	state = next_state
+	elevator_from = round_time
+	elevator_until = round_time + float(config["elevator"][key])
+
+func _bank_backpack() -> int:
 	var value := backpack_value()
 	for res in backpack:
 		banked[res] = int(banked.get(res, 0)) + int(backpack[res])
 	banked_value += value
 	backpack.clear()
-	state = "surface"
 	if value > 0:
 		save_progress()
 	return value
@@ -466,10 +500,17 @@ func ride_up() -> int:
 func descend() -> bool:
 	if state != "surface":
 		return false
-	player = start_cell()
-	facing = Vector2i.RIGHT
-	state = "mine"
+	_start_elevator("descending", "down_seconds")
 	return true
+
+func elevator_progress() -> float:
+	return clampf((round_time - elevator_from) / (elevator_until - elevator_from), 0.0, 1.0)
+
+func elevator_left() -> float:
+	return maxf(0.0, elevator_until - round_time)
+
+func elevator_warning() -> bool:
+	return state == "mine" and time_left() < float(config["elevator"]["up_seconds"])
 
 func debug_skip() -> void:
 	round_time = maxf(round_time, float(config["round"]["debug_skip_to"]))
@@ -492,13 +533,12 @@ func backpack_value() -> int:
 		total += int(backpack[res]) * int(config["resources"][res]["value"])
 	return total
 
-func is_heavy() -> bool:
-	return backpack_mass() >= int(config["player"]["heavy_mass"])
+func move_multiplier() -> float:
+	var p: Dictionary = config["player"]
+	return clampf(1.0 + float(p["slow_per_kg"]) * backpack_mass(), 1.0, float(p["max_slow_multiplier"]))
 
 func move_time() -> float:
-	var p: Dictionary = config["player"]
-	var base := float(p["move_time"])
-	return base * float(p["slow_move_multiplier"]) if is_heavy() else base
+	return float(config["player"]["move_time"]) * move_multiplier()
 
 func load_progress(path: String) -> void:
 	save_path = path
