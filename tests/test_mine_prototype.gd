@@ -4,13 +4,17 @@ const MineModel = preload("res://scripts/mine_prototype/mine_model.gd")
 const MainScript = preload("res://scripts/main.gd")
 const MainScene = preload("res://scenes/Main.tscn")
 const PrototypeScene = preload("res://scenes/MinePrototype.tscn")
+const RoundSim = preload("res://tests/round_sim.gd")
 const TEST_DIR = "user://dm_proto_tests/"
-const EXPECTED_ASSERTIONS = 121
+const EXPECTED_ASSERTIONS = 137
 const TESTS = [
 	"_test_map_from_seed",
 	"_test_generator_veins_many_seeds",
 	"_test_dig_balance",
 	"_test_dig_dirt_and_stone",
+	"_test_dirt_hits_and_pick_upgrade",
+	"_test_move_tempo_and_weight",
+	"_test_round_time_estimate",
 	"_test_move_into_dug_cell",
 	"_test_move_up_without_gravity",
 	"_test_slots_and_mass",
@@ -25,6 +29,7 @@ const TESTS = [
 	"_test_debug_skip",
 	"_test_scene_smoke",
 	"_test_scene_loads_progress",
+	"_test_scene_dig_and_walk_rhythm",
 	"_test_base_navigation_button",
 ]
 
@@ -217,7 +222,7 @@ func _test_dig_balance() -> bool:
 	var mats: Dictionary = m.config["materials"]
 	var p: Dictionary = m.config["player"]
 	_check(float(p["dig_interval"]) >= 0.35 and float(p["dig_interval"]) <= 0.4, "dig interval 0.35-0.40 s")
-	_check(int(mats["dirt"]["hp"]) == 1 and int(mats["coal"]["hp"]) == 4, "dirt 1 hp, coal 4 hp")
+	_check(int(mats["dirt"]["hp"]) == 2 and int(mats["coal"]["hp"]) == 4, "dirt 2 hp, coal 4 hp")
 	_check(int(mats["stone"]["hp"]) in [5, 6] and int(mats["copper"]["hp"]) in [7, 8], "stone 5-6 hp, copper 7-8 hp")
 	_check(int(mats["gold"]["hp"]) >= 12 and int(mats["gold"]["hp"]) <= 15, "gold 12-15 hp")
 	var before := _hits_to_break(m, MineModel.GOLD)
@@ -241,7 +246,9 @@ func _test_dig_dirt_and_stone() -> bool:
 	var target: Vector2i = m.start_cell() + Vector2i.DOWN
 	m._set_cell(target.x, target.y, MineModel.DIRT)
 	var r: Dictionary = m.try_step(Vector2i.DOWN)
-	_check(r["action"] == "break" and m.cell_at(target) == MineModel.EMPTY, "dirt breaks in one hit")
+	_check(r["action"] == "hit" and r["hp"] == 1 and m.cell_at(target) == MineModel.DIRT, "first hit only cracks dirt")
+	r = m.try_step(Vector2i.DOWN)
+	_check(r["action"] == "break" and m.cell_at(target) == MineModel.EMPTY, "dirt breaks on second hit")
 	_check(m.player == m.start_cell(), "digging does not move player into block")
 	var stone: Vector2i = target + Vector2i.DOWN
 	m._set_cell(stone.x, stone.y, MineModel.STONE)
@@ -251,6 +258,41 @@ func _test_dig_dirt_and_stone() -> bool:
 		hits.append(m.try_step(Vector2i.DOWN)["action"])
 	_check(hits.count("hit") == m.max_hp(MineModel.STONE) - 1 and hits.back() == "break", "stone needs %d hits" % m.max_hp(MineModel.STONE))
 	_check(m.scars[stone.y * m.width + stone.x] > 0, "dug cell keeps dig marks")
+	return true
+
+func _test_dirt_hits_and_pick_upgrade() -> bool:
+	var m = _model()
+	_check(_hits_to_break(m, MineModel.DIRT) == 2, "base pick needs 2 hits for dirt")
+	m.pick_level = 1
+	_check(m.pick_power() == 2 and _hits_to_break(m, MineModel.DIRT) == 1, "hardened pick breaks dirt in 1 hit")
+	_check(_hits_to_break(m, MineModel.STONE) == 3 and _hits_to_break(m, MineModel.COPPER) == 4 and _hits_to_break(m, MineModel.GOLD) == 7, "hardened pick still needs 3/4/7 hits for stone, copper, gold")
+	return true
+
+func _test_move_tempo_and_weight() -> bool:
+	var m = _model()
+	var p: Dictionary = m.config["player"]
+	_check(float(p["move_time"]) >= 0.28 and float(p["move_time"]) <= 0.32 and is_equal_approx(m.move_time(), float(p["move_time"])), "base move about 0.30 s per cell")
+	m.backpack = {"gold": 2}
+	_check(m.is_heavy() and is_equal_approx(m.move_time(), float(p["move_time"]) * float(p["slow_move_multiplier"])) and m.move_time() > float(p["move_time"]), "heavy miner moves slower")
+	var target: Vector2i = m.player + Vector2i.DOWN
+	m._set_cell(target.x, target.y, MineModel.DIRT)
+	_check(is_equal_approx(RoundSim.enter_cost(m, target), 2.0 * float(p["dig_interval"]) + m.move_time()), "dirt cell costs two full dig intervals plus a step")
+	return true
+
+func _test_round_time_estimate() -> bool:
+	var round_seconds := float(_model().config["round"]["active_seconds"])
+	var all_found := true
+	var worst_trip := 0.0
+	var worst_copper := 0.0
+	for seed_value in RoundSim.SEEDS:
+		var r: Dictionary = RoundSim.simulate(_model(seed_value), 3)
+		all_found = all_found and r["trips"].size() == 3
+		worst_trip = maxf(worst_trip, float(r["trips"].back()))
+		worst_copper = maxf(worst_copper, float(RoundSim.simulate(_model(seed_value), 1, 1.0, MineModel.COPPER)["trips"][0]))
+	_check(is_equal_approx(round_seconds, 280.0), "round stays 4:40")
+	_check(all_found, "every seed has 3 reachable ore blocks")
+	_check(worst_trip * 4.0 <= round_seconds, "3 nuggets and return fit in a quarter of the round (worst %.1f s)" % worst_trip)
+	_check(worst_copper * 2.0 <= round_seconds, "copper trip fits in half of the round (worst %.1f s)" % worst_copper)
 	return true
 
 func _test_move_into_dug_cell() -> bool:
@@ -274,7 +316,7 @@ func _test_move_up_without_gravity() -> bool:
 	_check(r["action"] == "move" and m.player == start + Vector2i.UP, "move up into chamber")
 	var above: Vector2i = m.player + Vector2i.UP
 	m._set_cell(above.x, above.y, MineModel.DIRT)
-	m.try_step(Vector2i.UP)
+	_break(m, Vector2i.UP)
 	m.try_step(Vector2i.UP)
 	_check(m.player == above, "dig and climb up through tunnel")
 	m.tick(1.0)
@@ -330,7 +372,7 @@ func _test_boulder_falls_stuns_and_push() -> bool:
 	for _n in range(5):
 		m.try_step(Vector2i.RIGHT)
 	_check(m.player == Vector2i(bx, m.station_y), "miner under demo boulder")
-	var r: Dictionary = m.try_step(Vector2i.UP)
+	var r: Dictionary = _break(m, Vector2i.UP)
 	_check(r["action"] == "break", "support block dug")
 	var e1: Array = m.step_boulders()
 	_check(e1.size() == 1 and e1[0]["type"] == "fall" and m.boulders[id]["pos"] == Vector2i(bx, m.station_y - 1), "boulder falls after support removed")
@@ -358,7 +400,7 @@ func _stunned_under_demo(m, pack: Dictionary) -> Array:
 	for _n in range(5):
 		m.try_step(Vector2i.RIGHT)
 	m.backpack = pack
-	m.try_step(Vector2i.UP)
+	_break(m, Vector2i.UP)
 	m.step_boulders()
 	return m.step_boulders()
 
@@ -559,6 +601,36 @@ func _test_scene_loads_progress() -> bool:
 	scene.queue_free()
 	await process_frame
 	return true
+
+func _test_scene_dig_and_walk_rhythm() -> bool:
+	var scene: Node2D = PrototypeScene.instantiate()
+	scene.save_path = TEST_DIR + "scene_rhythm.json"
+	root.add_child(scene)
+	await process_frame
+	scene.input_enabled = false
+	var m = scene.model
+	var p: Dictionary = m.config["player"]
+	var interval := float(p["dig_interval"])
+	var target: Vector2i = m.player + Vector2i.DOWN
+	m._set_cell(target.x, target.y, MineModel.DIRT)
+	var r: Dictionary = scene.apply_step(Vector2i.DOWN)
+	_check(r["action"] == "hit" and m.hp_at(target) < m.max_hp(MineModel.DIRT) and scene.hp_bar.visible and is_equal_approx(scene.busy, interval), "first dirt hit cracks block and waits one dig interval")
+	_check(scene.player_sprite.animation == "dig" and is_equal_approx(_anim_seconds(scene), interval), "dig animation lasts the dig interval")
+	r = scene.apply_step(Vector2i.DOWN)
+	_check(r["action"] == "break" and is_equal_approx(scene.busy, interval), "final hit keeps full dig interval")
+	r = scene.apply_step(Vector2i.DOWN)
+	_check(r["action"] == "move" and is_equal_approx(scene.busy, m.move_time()) and scene.player_sprite.animation == "walk" and is_equal_approx(_anim_seconds(scene), m.move_time()), "walk cycle spans one cell move")
+	m.backpack = {"gold": 2}
+	r = scene.apply_step(Vector2i.UP)
+	_check(r["action"] == "move" and is_equal_approx(scene.busy, float(p["move_time"]) * float(p["slow_move_multiplier"])) and is_equal_approx(_anim_seconds(scene), scene.busy), "heavy walk is slower and animation follows")
+	scene.queue_free()
+	await process_frame
+	return true
+
+func _anim_seconds(scene) -> float:
+	var frames: SpriteFrames = scene.player_sprite.sprite_frames
+	var anim: StringName = scene.player_sprite.animation
+	return frames.get_frame_count(anim) / (frames.get_animation_speed(anim) * absf(scene.player_sprite.get_playing_speed()))
 
 func _test_base_navigation_button() -> bool:
 	var g: Control = MainScene.instantiate()

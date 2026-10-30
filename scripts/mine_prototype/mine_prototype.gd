@@ -509,12 +509,18 @@ func apply_step(dir: Vector2i) -> Dictionary:
 	return result
 
 func _move_player(to: Vector2i, duration: float) -> void:
-	player_sprite.play("walk")
+	_play_for("walk", duration)
 	create_tween().tween_property(player_root, "position", _cell_center(to), duration)
 
+func _play_for(anim: String, duration: float, backwards: bool = false) -> void:
+	var frames: SpriteFrames = player_sprite.sprite_frames
+	var speed := frames.get_frame_count(anim) / (frames.get_animation_speed(anim) * duration)
+	player_sprite.play(anim, -speed if backwards else speed, backwards)
+
 func _dig_effect(result: Dictionary, dir: Vector2i) -> void:
+	busy = float(model.config["player"]["dig_interval"])
 	player_sprite.stop()
-	player_sprite.play("dig")
+	_play_for("dig", busy, true)
 	var target: Vector2i = result["cell"]
 	var name: String = result["material"]
 	var face := _cell_center(target) - Vector2(dir) * CELL * 0.45
@@ -523,7 +529,6 @@ func _dig_effect(result: Dictionary, dir: Vector2i) -> void:
 	shake = maxf(shake, 2.5)
 	_flash(target)
 	if result["action"] == "hit":
-		busy = float(model.config["player"]["dig_interval"])
 		_dust(face, color, 10, Vector2(-dir))
 		_particles(face, color.lightened(0.2), 5, Vector2(-dir), 260.0, 700.0, 4.0, 0.5)
 		hp_bar.visible = true
@@ -534,7 +539,6 @@ func _dig_effect(result: Dictionary, dir: Vector2i) -> void:
 		t.tween_interval(0.7)
 		t.tween_property(hp_bar, "modulate:a", 0.0, 0.3)
 		return
-	busy = float(model.config["player"]["dig_interval"]) * 0.6
 	hp_bar.visible = false
 	_dust(_cell_center(target), color, 22, Vector2(-dir))
 	_debris(_cell_center(target), color)

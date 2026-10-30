@@ -17,7 +17,7 @@
     "strength": 2,
     "slots": 3,
     "heavy_mass": 8,
-    "move_time": 0.16,
+    "move_time": 0.3,
     "dig_interval": 0.38,
     "stun_seconds": 3.8,
     "stun_guard_seconds": 2.5,
@@ -40,7 +40,7 @@
     "demo": {"dx": 6, "dy": -2, "weight": 1}
   },
   "materials": {
-    "dirt": {"hp": 1, "label": "Ziemia"},
+    "dirt": {"hp": 2, "label": "Ziemia"},
     "stone": {"hp": 6, "label": "Kamień"},
     "coal": {"hp": 4, "label": "Węgiel", "drop": "coal"},
     "copper": {"hp": 7, "label": "Miedź", "drop": "copper"},
