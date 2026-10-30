@@ -6,7 +6,7 @@ const MainScene = preload("res://scenes/Main.tscn")
 const PrototypeScene = preload("res://scenes/MinePrototype.tscn")
 const RoundSim = preload("res://tests/round_sim.gd")
 const TEST_DIR = "user://dm_proto_tests/"
-const EXPECTED_ASSERTIONS = 199
+const EXPECTED_ASSERTIONS = 201
 const TESTS = [
 	"_test_map_from_seed",
 	"_test_generator_veins_many_seeds",
@@ -41,6 +41,7 @@ const TESTS = [
 	"_test_stun_and_block_keep_position",
 	"_test_collapse_stops_move",
 	"_test_elevator_ride_whole_pixels",
+	"_test_scene_arrival_and_break_same_frame",
 	"_test_mass_change_keeps_current_move",
 	"_test_diagnostics_overlay",
 	"_test_base_navigation_button",
@@ -976,6 +977,25 @@ func _test_elevator_ride_whole_pixels() -> bool:
 	_check(m.banked_value == 49 and m.state == "surface" and scene.cage.position == scene._surface_point(), "lag frames do not duplicate deposit")
 	scene.queue_free()
 	await process_frame
+	return true
+
+func _test_scene_arrival_and_break_same_frame() -> bool:
+	for start in [249.0, 250.0]:
+		var scene: Node2D = PrototypeScene.instantiate()
+		scene.save_path = TEST_DIR + "arrival_break_%d.json" % int(start)
+		root.add_child(scene)
+		await process_frame
+		scene.input_enabled = false
+		var m = scene.model
+		m.round_time = start
+		m.backpack = {"gold": 1}
+		scene.apply_step(Vector2i.LEFT)
+		scene._process(15.0)
+		scene._process(16.5)
+		scene._process(1.0)
+		_check(m.state == "break" and m.banked_value == 28 and scene.last_trip_value == 28 and scene.cage.position == scene._surface_point() and scene.player_root.position == scene._surface_point(), "arrival and round end in one frame from %d s: surface, bank once" % int(start))
+		scene.queue_free()
+		await process_frame
 	return true
 
 func _test_mass_change_keeps_current_move() -> bool:

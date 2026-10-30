@@ -772,6 +772,9 @@ func _handle_event(e: Dictionary) -> void:
 		_collapse_to_surface()
 	elif type == "arrived":
 		last_trip_value = int(e["value"])
+		cage.position = _surface_point()
+		moving = false
+		player_root.position = cage.position
 		show_toast("Wyniesiono łup: +%d zł" % last_trip_value)
 	elif type == "descended":
 		cage.position = _cell_center(model.elevator_cell())
