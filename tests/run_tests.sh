@@ -26,7 +26,7 @@ status=0
 for bin in "${bins[@]}"; do
 	log="$(mktemp)"
 	problems=""
-	for step in "--import" "--check-only --script res://scripts/main.gd" "--check-only --script res://tests/test_core_loop.gd" "-s res://tests/test_core_loop.gd"; do
+	for step in "--import" "--check-only --script res://scripts/legacy/legacy_text_mine.gd" "--check-only --script res://scripts/game_entry.gd" "--check-only --script res://tests/test_core_loop.gd" "-s res://tests/test_core_loop.gd" "--check-only --script res://tests/test_mine_prototype.gd" "-s res://tests/test_mine_prototype.gd"; do
 		timeout 300 "$bin" --headless --path "$project" $step >>"$log" 2>&1
 		code=$?
 		if [ $code -ne 0 ]; then
@@ -43,8 +43,11 @@ for bin in "${bins[@]}"; do
 	if ! grep -qE "^ALL_TESTS_COMPLETED tests=[0-9]+ assertions=[0-9]+$" <<<"$clean"; then
 		problems="$problems [completion marker missing]"
 	fi
+	if ! grep -qE "^PROTOTYPE_TESTS_COMPLETED tests=[0-9]+ assertions=[0-9]+$" <<<"$clean"; then
+		problems="$problems [prototype marker missing]"
+	fi
 	echo "== $bin"
-	grep -E "^Godot Engine|SCRIPT ERROR|^ERROR|Parse Error|^FAIL|^PASSED|^ALL_TESTS_COMPLETED" <<<"$clean"
+	grep -E "^Godot Engine|SCRIPT ERROR|^ERROR|Parse Error|^FAIL|^PASSED|^PROTOTYPE PASSED|^ALL_TESTS_COMPLETED|^PROTOTYPE_TESTS_COMPLETED" <<<"$clean"
 	if [ -z "$problems" ]; then
 		echo "RESULT: OK"
 	else

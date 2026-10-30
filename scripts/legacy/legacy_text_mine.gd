@@ -3,6 +3,7 @@ extends Control
 const DATA_PATH = "res://data/balance.json"
 const SAVE_PATH = "user://save_v12.json"
 const EVENTS_PATH = "user://events_v12.jsonl"
+const PROTOTYPE_SCENE = "res://scenes/MinePrototype.tscn"
 
 var save_path: String = SAVE_PATH
 var events_path: String = EVENTS_PATH
@@ -124,6 +125,7 @@ func _render_base() -> void:
 	_label("BAZA", 33)
 	_panel_text("Kilof: %d   |   Trening: %d   |   Generatory: %d/%d\nNajgłębsza warstwa: %d   |   Wyprawy: %d" % [drill, training, generators.size(), int(balance["base"]["generator_slots"]), best_depth, lifetime_runs])
 	_button("ROZPOCZNIJ WYPRAWĘ", Callable(self, "_start_run"))
+	_button("NOWA KOPALNIA — PROTOTYP", Callable(self, "_open_prototype"))
 	var drill_cost := _upgrade_cost("drill")
 	var drill_button := _button("Ulepsz kilof (+1 mocy): %d zl" % drill_cost, Callable(self, "_upgrade").bind("drill"))
 	drill_button.disabled = gold < drill_cost
@@ -213,6 +215,11 @@ func _start_run() -> void:
 	notice = "Kop od gory, szukaj drog do bogatych zyl i rdzeni."
 	_event("run_start", {"run": run_number})
 	_render()
+
+func _open_prototype() -> void:
+	_settle_income()
+	_save_game()
+	get_tree().change_scene_to_file(PROTOTYPE_SCENE)
 
 func _can_dig(i: int) -> bool:
 	var tiles: Array = run_data["tiles"]

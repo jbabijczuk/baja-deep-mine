@@ -1,7 +1,7 @@
 extends SceneTree
 
-const MainScript = preload("res://scripts/main.gd")
-const MainScene = preload("res://scenes/Main.tscn")
+const MainScript = preload("res://scripts/legacy/legacy_text_mine.gd")
+const MainScene = preload("res://scenes/legacy/LegacyTextMine.tscn")
 const TEST_DIR = "user://dm_tests/"
 const EXPECTED_ASSERTIONS = 99
 const TESTS = [
