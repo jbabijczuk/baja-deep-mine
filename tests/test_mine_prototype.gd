@@ -7,7 +7,7 @@ const PrototypeScene = preload("res://scenes/MinePrototype.tscn")
 const EntryScene = preload("res://scenes/GameEntry.tscn")
 const RoundSim = preload("res://tests/round_sim.gd")
 const TEST_DIR = "user://dm_proto_tests/"
-const EXPECTED_ASSERTIONS = 223
+const EXPECTED_ASSERTIONS = 224
 const TESTS = [
 	"_test_map_from_seed",
 	"_test_generator_veins_many_seeds",
@@ -789,6 +789,7 @@ func _test_debug_skip() -> bool:
 func _test_scene_smoke() -> bool:
 	var scene: Node2D = PrototypeScene.instantiate()
 	scene.save_path = TEST_DIR + "scene_smoke.json"
+	scene.start_at_surface = false
 	root.add_child(scene)
 	await process_frame
 	await process_frame
@@ -821,6 +822,7 @@ func _test_scene_smoke() -> bool:
 func _test_scene_loads_progress() -> bool:
 	var scene: Node2D = PrototypeScene.instantiate()
 	scene.save_path = TEST_DIR + "scene_smoke.json"
+	scene.start_at_surface = false
 	root.add_child(scene)
 	await process_frame
 	await process_frame
@@ -832,6 +834,7 @@ func _test_scene_loads_progress() -> bool:
 func _test_scene_dig_and_walk_rhythm() -> bool:
 	var scene: Node2D = PrototypeScene.instantiate()
 	scene.save_path = TEST_DIR + "scene_rhythm.json"
+	scene.start_at_surface = false
 	root.add_child(scene)
 	await process_frame
 	scene.input_enabled = false
@@ -857,6 +860,7 @@ func _test_scene_dig_and_walk_rhythm() -> bool:
 func _open_scene(file_name: String):
 	var scene: Node2D = PrototypeScene.instantiate()
 	scene.save_path = TEST_DIR + file_name
+	scene.start_at_surface = false
 	root.add_child(scene)
 	await process_frame
 	var m = scene.model
@@ -1013,6 +1017,7 @@ func _ride_frames(scene, seconds: float, fps: float = 60.0) -> Dictionary:
 func _test_elevator_ride_whole_pixels() -> bool:
 	var scene: Node2D = PrototypeScene.instantiate()
 	scene.save_path = TEST_DIR + "smooth_elevator.json"
+	scene.start_at_surface = false
 	root.add_child(scene)
 	await process_frame
 	scene.input_enabled = false
@@ -1057,6 +1062,7 @@ func _test_scene_arrival_and_break_same_frame() -> bool:
 	for start in [last_start - 1.0, last_start]:
 		var scene: Node2D = PrototypeScene.instantiate()
 		scene.save_path = TEST_DIR + "arrival_break_%d.json" % int(start)
+		scene.start_at_surface = false
 		root.add_child(scene)
 		await process_frame
 		scene.input_enabled = false
@@ -1138,6 +1144,7 @@ func _test_start_screen() -> bool:
 	await process_frame
 	var mine: Node = current_scene
 	_check(mine != null and mine.scene_file_path == PrototypeScene.resource_path, "play opens mine scene")
+	_check(mine.model.state == "surface" and mine.player_root.position == mine._surface_point() and mine.cage.position == mine._surface_point() and mine.surface_panel.visible, "continue starts on surface in elevator")
 	_check(_fingerprint(save) == before, "play leaves progress untouched")
 	_check(mine.MAIN_SCENE != MainScene.resource_path, "base never opens legacy scene")
 	g.queue_free()

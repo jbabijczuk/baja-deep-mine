@@ -60,6 +60,7 @@ var toast_time: float = 0.0
 var clock: float = 0.0
 var last_trip_value: int = 0
 var input_enabled: bool = true
+var start_at_surface: bool = true
 var mine_controls: Array = []
 var moving: bool = false
 var move_from := Vector2.ZERO
@@ -85,6 +86,10 @@ func _ready() -> void:
 	_build_hud()
 	_rebuild_boulders()
 	_place_at_station()
+	if start_at_surface:
+		model.state = "surface"
+		cage.position = _surface_point()
+		player_root.position = _surface_point()
 	camera_pos = _camera_target()
 	camera.global_position = camera_pos
 	_update_hud()
