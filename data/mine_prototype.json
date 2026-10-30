@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "seed": 20261029,
+  "debug_seed": 20261029,
   "map": {
     "width": 48,
     "height": 64,
@@ -42,7 +42,8 @@
     "count": 26,
     "fall_interval": 0.16,
     "weights": [1, 1, 2, 3],
-    "demo": {"dx": 6, "dy": -2, "weight": 1}
+    "demo": {"dx": 6, "dy": -2, "weight": 1},
+    "early": {"count": 8, "rows": 20, "spawn_guard": 4, "weights": [1, 1, 2]}
   },
   "materials": {
     "dirt": {"hp": 2, "label": "Ziemia"},
@@ -57,7 +58,7 @@
     "gold": {"label": "Złoto", "mass": 4, "value": 28}
   },
   "layers": [
-    {"until": 14, "stone": 0.22},
+    {"until": 14, "stone": 0.42},
     {"until": 32, "stone": 0.45},
     {"until": 999, "stone": 0.6}
   ],

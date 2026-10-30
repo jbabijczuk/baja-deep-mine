@@ -73,7 +73,7 @@ var diag_time: float = 0.0
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	model = MineModel.new()
-	model.generate(int(model.config["seed"]))
+	model.generate(int(model.config["debug_seed"]) if dev_mode() else model.fresh_seed())
 	model.load_progress(save_path)
 	art = MineArt.new()
 	art.build()
@@ -574,7 +574,7 @@ func _update_diagnostics(delta: float) -> void:
 	var worst := 0.0
 	for d in diag_deltas:
 		worst = maxf(worst, d)
-	diag_label.text = "FPS %d\nklatka śr %.1f ms / max %.1f ms (%.0f s)\nmove_time %.2f s\nstan %s" % [Engine.get_frames_per_second(), total / diag_deltas.size() * 1000.0, worst * 1000.0, DIAG_WINDOW, model.move_time(), motion_state()]
+	diag_label.text = "FPS %d\nklatka śr %.1f ms / max %.1f ms (%.0f s)\nmove_time %.2f s\nstan %s\nseed %d" % [Engine.get_frames_per_second(), total / diag_deltas.size() * 1000.0, worst * 1000.0, DIAG_WINDOW, model.move_time(), motion_state(), model.seed_value]
 
 func drop_cheapest() -> Dictionary:
 	var result: Dictionary = model.drop_cheapest()

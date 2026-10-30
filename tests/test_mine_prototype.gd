@@ -7,10 +7,13 @@ const PrototypeScene = preload("res://scenes/MinePrototype.tscn")
 const EntryScene = preload("res://scenes/GameEntry.tscn")
 const RoundSim = preload("res://tests/round_sim.gd")
 const TEST_DIR = "user://dm_proto_tests/"
-const EXPECTED_ASSERTIONS = 223
+const EXPECTED_ASSERTIONS = 238
 const TESTS = [
 	"_test_map_from_seed",
 	"_test_generator_veins_many_seeds",
+	"_test_layout_differs_per_seed",
+	"_test_fresh_seeds_unique",
+	"_test_rounds_regenerate_over_time",
 	"_test_dig_balance",
 	"_test_dig_dirt_and_stone",
 	"_test_dirt_hits_and_pick_upgrade",
@@ -233,6 +236,140 @@ func _test_generator_veins_many_seeds() -> bool:
 					near = near or m.cell_at(Vector2i(x + dx, y + dy)) >= h and MineModel.is_ore(m.cell_at(Vector2i(x + dx, y + dy)))
 			hint_ok = hint_ok and near and MineModel.is_rock(m.cell_at(Vector2i(x, y)))
 	_check(hint_ok, "every hint sits in rock next to a real vein")
+	return true
+
+func _early_rows(m, rows: int = 15) -> PackedByteArray:
+	var out := PackedByteArray()
+	for y in range(m.station_y + 1, m.station_y + rows + 1):
+		for x in range(1, m.width - 1):
+			out.append(m.cell_at(Vector2i(x, y)))
+	return out
+
+func _difference(a: PackedByteArray, b: PackedByteArray) -> float:
+	var diff := 0
+	for i in range(a.size()):
+		if a[i] != b[i]:
+			diff += 1
+	return float(diff) / float(a.size())
+
+func _test_layout_differs_per_seed() -> bool:
+	var seeds := 30
+	var stone_ok := true
+	var stone_sum := 0.0
+	var early_ok := true
+	var early_sum := 0
+	var no_trap := true
+	var reachable := true
+	var fair_start := true
+	var worst_first := 0.0
+	var differs := true
+	var columns := {}
+	var previous := PackedByteArray()
+	for s in range(seeds):
+		var m = _model(500 + s * 7717)
+		var early: Dictionary = m.config["boulders"]["early"]
+		var corridor_end: int = m.shaft_x + int(m.config["map"]["start_tunnel"]) + 1
+		var demo: Dictionary = m.config["boulders"]["demo"]
+		var demo_pos := Vector2i(m.shaft_x + int(demo["dx"]), m.station_y + int(demo["dy"]))
+		var stone := 0
+		var cells := 0
+		for y in range(m.station_y + 1, int(m.config["layers"][0]["until"])):
+			for x in range(1, m.width - 1):
+				cells += 1
+				if m.cell_at(Vector2i(x, y)) == MineModel.STONE:
+					stone += 1
+		var share := float(stone) / float(cells)
+		stone_sum += share
+		stone_ok = stone_ok and share >= 0.28 and share <= 0.5
+		var near := 0
+		for id in m.boulders:
+			var pos: Vector2i = m.boulders[id]["pos"]
+			if pos == demo_pos:
+				continue
+			no_trap = no_trap and pos.y > m.station_y and not (pos.x >= m.shaft_x - 3 and pos.x <= corridor_end and pos.y <= m.station_y + int(early["spawn_guard"]))
+			if pos.y <= m.station_y + 20:
+				near += 1
+				columns[pos.x] = true
+		early_sum += near
+		early_ok = early_ok and near >= int(early["count"])
+		reachable = reachable and m.reachable(m.start_cell(), m.elevator_cell())
+		var first: Dictionary = RoundSim.simulate(m, 1)
+		fair_start = fair_start and first["trips"].size() == 1 and float(first["trips"][0]) <= 60.0
+		worst_first = maxf(worst_first, float(first["trips"][0]) if first["trips"].size() == 1 else INF)
+		var rows := _early_rows(_model(500 + s * 7717))
+		if not previous.is_empty():
+			differs = differs and _difference(rows, previous) >= 0.3
+		previous = rows
+	var avg := stone_sum / seeds
+	_check(stone_ok and avg >= 0.35 and avg <= 0.4, "plain stone in first layer 35-40%% on average (%.1f%%)" % (avg * 100.0))
+	_check(early_ok and columns.size() >= 20, "falling boulders in first 20 rows on every seed (avg %.1f, %d columns)" % [float(early_sum) / seeds, columns.size()])
+	_check(no_trap, "no boulder over corridor or inside spawn guard")
+	_check(reachable, "elevator reachable from start on every seed")
+	_check(fair_start, "first ore and return within 60 s on every seed (worst %.1f s)" % worst_first)
+	_check(differs, "first 15 rows differ by at least 30% between seeds")
+	var a = _model(31337)
+	var b = _model(a.seed_value)
+	_check(a.cells == b.cells and a.boulders.size() == b.boulders.size(), "map reproducible from readable seed")
+	return true
+
+func _test_fresh_seeds_unique() -> bool:
+	var seen := {}
+	var unique := true
+	for _n in range(500):
+		var m = MineModel.new()
+		var s: int = m.fresh_seed()
+		unique = unique and not seen.has(s)
+		seen[s] = true
+	_check(unique, "500 quick restarts draw 500 different seeds")
+	var m = _model(99)
+	_check(m.fresh_seed() != m.seed_value, "fresh seed never repeats current map")
+	return true
+
+func _test_rounds_regenerate_over_time() -> bool:
+	var path := TEST_DIR + "rounds.json"
+	var m = _model()
+	m.load_progress(path)
+	var cycle := float(m.config["round"]["active_seconds"]) + float(m.config["round"]["break_seconds"])
+	m.backpack = {"gold": 1}
+	m.try_step(Vector2i.LEFT)
+	m.tick(float(m.config["elevator"]["up_seconds"]) + float(m.config["elevator"]["unload_seconds"]))
+	m.banked_value += int(m.config["upgrades"]["pick"][0]["cost"])
+	m.buy("pick")
+	var banked: int = m.banked_value
+	m.descend()
+	var seeds: Array = [m.seed_value]
+	var layouts: Array = [_early_rows(m)]
+	var resets: Array = []
+	var clock_ok := true
+	var clean_ok := true
+	var elapsed: float = m.round_time
+	while elapsed < cycle * 3.0 + 10.0:
+		if m.state == "mine" and m.loot_count() == 0:
+			m.backpack = {"copper": 1}
+			m._add_loot(m.player, "coal")
+		var before: float = m.round_time
+		for e in m.tick(0.1):
+			if e["type"] == "new_round":
+				resets.append(elapsed + 0.1)
+				seeds.append(m.seed_value)
+				layouts.append(_early_rows(m))
+				clean_ok = clean_ok and m.loot_count() == 0 and m.backpack.is_empty() and m.banked_value == banked and m.pick_level == 1
+				m.descend()
+		elapsed += 0.1
+		clock_ok = clock_ok and m.round_time >= 0.0 and m.round_time <= cycle and (m.round_time > before or m.round_time < 0.2)
+	_check(resets.size() == 3 and absf(resets[0] - cycle) < 0.2 and absf(resets[2] - resets[1] - cycle) < 0.2 and m.round_index == 3, "one reset per 4:40+0:20 cycle over %d s" % int(elapsed))
+	_check(clock_ok, "round clock advances without stalls or repeated resets")
+	var distinct := true
+	for i in range(1, seeds.size()):
+		distinct = distinct and not seeds.slice(0, i).has(seeds[i]) and _difference(layouts[i], layouts[i - 1]) >= 0.3
+	_check(distinct, "each round has a new seed and a different layout")
+	_check(clean_ok, "resets bury loot, keep bank and upgrades, no duplication")
+	m.descend()
+	var big: Array = m.tick(cycle * 2.0).filter(func(e): return e["type"] == "new_round")
+	_check(big.size() == 2 and m.round_index == 5, "long frame crosses two cycles exactly twice")
+	var reloaded = _model()
+	reloaded.load_progress(path)
+	_check(reloaded.banked_value == banked and reloaded.pick_level == 1 and reloaded.backpack.is_empty(), "save after many rounds keeps gold and upgrades")
 	return true
 
 func _test_dig_balance() -> bool:

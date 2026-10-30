@@ -48,9 +48,21 @@ var elevator_until: float = 0.0
 var round_index: int = 0
 var next_boulder_id: int = 0
 var rng := RandomNumberGenerator.new()
+static var seed_source := _randomized_source()
 
 func _init(cfg: Dictionary = {}) -> void:
 	config = cfg if not cfg.is_empty() else load_config()
+
+static func _randomized_source() -> RandomNumberGenerator:
+	var source := RandomNumberGenerator.new()
+	source.randomize()
+	return source
+
+func fresh_seed() -> int:
+	var next := seed_value
+	while next == seed_value:
+		next = int(seed_source.randi())
+	return next
 
 static func load_config() -> Dictionary:
 	var parsed = JSON.parse_string(FileAccess.get_file_as_string(DATA_PATH))
@@ -184,6 +196,23 @@ func _place_boulders() -> void:
 			break
 		var pos := Vector2i(rng.randi_range(1, width - 2), rng.randi_range(station_y + 3, height - 3))
 		if absi(pos.x - shaft_x) <= exclusion and pos.y < station_y + exclusion:
+			continue
+		if not is_material(cell_at(pos)) or not is_material(cell_at(pos + Vector2i.DOWN)) or cell_at(pos + Vector2i.UP) == BOULDER:
+			continue
+		_add_boulder(pos, int(weights[rng.randi_range(0, weights.size() - 1)]))
+		placed += 1
+	_place_early_boulders(b["early"])
+
+func _place_early_boulders(early: Dictionary) -> void:
+	var weights: Array = early["weights"]
+	var guard_until := station_y + int(early["spawn_guard"])
+	var corridor_end := shaft_x + int(config["map"]["start_tunnel"]) + 1
+	var placed := 0
+	for _attempt in range(int(early["count"]) * 30):
+		if placed >= int(early["count"]):
+			break
+		var pos := Vector2i(rng.randi_range(1, width - 2), rng.randi_range(station_y + 2, station_y + int(early["rows"])))
+		if pos.x >= shaft_x - 3 and pos.x <= corridor_end and pos.y <= guard_until:
 			continue
 		if not is_material(cell_at(pos)) or not is_material(cell_at(pos + Vector2i.DOWN)) or cell_at(pos + Vector2i.UP) == BOULDER:
 			continue
@@ -467,7 +496,7 @@ func _advance(events: Array) -> float:
 		events.append({"type": "descended"})
 	elif state == "break":
 		round_index += 1
-		generate(seed_value + 7919)
+		generate(fresh_seed())
 		state = "surface"
 		events.append({"type": "new_round", "round": round_index})
 		return float(config["round"]["active_seconds"]) + float(config["round"]["break_seconds"])
