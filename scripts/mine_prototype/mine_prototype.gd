@@ -341,7 +341,8 @@ func _build_hud() -> void:
 	var drop_btn := _make_button("WYRZUĆ TAŃSZY (Q)", Callable(self, "drop_cheapest"), 18)
 	tools.add_child(drop_btn)
 	mine_controls.append(drop_btn)
-	tools.add_child(_make_button("DEBUG: KONIEC RUNDY", Callable(self, "_debug_skip"), 18))
+	if dev_mode():
+		tools.add_child(_make_button("DEBUG: KONIEC RUNDY", Callable(self, "_debug_skip"), 18))
 	toast_panel = PanelContainer.new()
 	toast_panel.add_theme_stylebox_override("panel", _panel_style(0.75))
 	toast_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
@@ -536,6 +537,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		toggle_diagnostics()
 	elif input_enabled and event.physical_keycode == KEY_Q:
 		drop_cheapest()
+
+func dev_mode() -> bool:
+	return OS.get_cmdline_user_args().has("--dev")
 
 func diagnostics_allowed() -> bool:
 	return OS.is_debug_build() or not OS.has_feature("android")

@@ -7,7 +7,7 @@ const PrototypeScene = preload("res://scenes/MinePrototype.tscn")
 const EntryScene = preload("res://scenes/GameEntry.tscn")
 const RoundSim = preload("res://tests/round_sim.gd")
 const TEST_DIR = "user://dm_proto_tests/"
-const EXPECTED_ASSERTIONS = 221
+const EXPECTED_ASSERTIONS = 223
 const TESTS = [
 	"_test_map_from_seed",
 	"_test_generator_veins_many_seeds",
@@ -48,6 +48,7 @@ const TESTS = [
 	"_test_mass_change_keeps_current_move",
 	"_test_diagnostics_overlay",
 	"_test_start_screen",
+	"_test_hud_hides_dev_tools",
 ]
 
 var failures: int = 0
@@ -1145,6 +1146,18 @@ func _test_start_screen() -> bool:
 	await process_frame
 	_check(current_scene != null and current_scene.scene_file_path == EntryScene.resource_path, "base returns to start screen")
 	current_scene.queue_free()
+	await process_frame
+	return true
+
+func _test_hud_hides_dev_tools() -> bool:
+	var scene: Node2D = PrototypeScene.instantiate()
+	scene.save_path = TEST_DIR + "hud_dev.json"
+	root.add_child(scene)
+	await process_frame
+	var texts := _ui_texts(scene).to_upper()
+	_check(not scene.dev_mode(), "dev mode off by default")
+	_check(not texts.contains("DEBUG") and not texts.contains("PROTOTYP") and not texts.contains("BUILD"), "hud and surface hide dev texts")
+	scene.queue_free()
 	await process_frame
 	return true
 
