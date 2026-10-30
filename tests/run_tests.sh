@@ -26,7 +26,7 @@ status=0
 for bin in "${bins[@]}"; do
 	log="$(mktemp)"
 	problems=""
-	for step in "--import" "--check-only --script res://scripts/main.gd" "--check-only --script res://tests/test_core_loop.gd" "-s res://tests/test_core_loop.gd" "--check-only --script res://tests/test_mine_prototype.gd" "-s res://tests/test_mine_prototype.gd"; do
+	for step in "--import" "--check-only --script res://scripts/legacy/legacy_text_mine.gd" "--check-only --script res://scripts/game_entry.gd" "--check-only --script res://tests/test_core_loop.gd" "-s res://tests/test_core_loop.gd" "--check-only --script res://tests/test_mine_prototype.gd" "-s res://tests/test_mine_prototype.gd"; do
 		timeout 300 "$bin" --headless --path "$project" $step >>"$log" 2>&1
 		code=$?
 		if [ $code -ne 0 ]; then

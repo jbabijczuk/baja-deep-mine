@@ -1,12 +1,13 @@
 extends SceneTree
 
 const MineModel = preload("res://scripts/mine_prototype/mine_model.gd")
-const MainScript = preload("res://scripts/main.gd")
-const MainScene = preload("res://scenes/Main.tscn")
+const MainScript = preload("res://scripts/legacy/legacy_text_mine.gd")
+const MainScene = preload("res://scenes/legacy/LegacyTextMine.tscn")
 const PrototypeScene = preload("res://scenes/MinePrototype.tscn")
+const EntryScene = preload("res://scenes/GameEntry.tscn")
 const RoundSim = preload("res://tests/round_sim.gd")
 const TEST_DIR = "user://dm_proto_tests/"
-const EXPECTED_ASSERTIONS = 214
+const EXPECTED_ASSERTIONS = 221
 const TESTS = [
 	"_test_map_from_seed",
 	"_test_generator_veins_many_seeds",
@@ -46,7 +47,7 @@ const TESTS = [
 	"_test_scene_arrival_and_break_same_frame",
 	"_test_mass_change_keeps_current_move",
 	"_test_diagnostics_overlay",
-	"_test_base_navigation_button",
+	"_test_start_screen",
 ]
 
 var failures: int = 0
@@ -1109,18 +1110,55 @@ func _anim_seconds(scene) -> float:
 	var anim: StringName = scene.player_sprite.animation
 	return frames.get_frame_count(anim) / (frames.get_animation_speed(anim) * absf(scene.player_sprite.get_playing_speed()))
 
-func _test_base_navigation_button() -> bool:
-	var g: Control = MainScene.instantiate()
-	g.save_path = TEST_DIR + "nav_save.json"
-	g.events_path = TEST_DIR + "nav_events.jsonl"
+func _test_start_screen() -> bool:
+	_check(ProjectSettings.get_setting("application/run/main_scene") == EntryScene.resource_path, "main scene is start screen")
+	var save := TEST_DIR + "entry_progress.json"
+	var g: Control = EntryScene.instantiate()
+	g.save_path = save
 	root.add_child(g)
 	await process_frame
-	var found := false
-	for child in g.content.get_children():
-		if child is Button and child.text == "NOWA KOPALNIA — PROTOTYP":
-			found = true
-	_check(found, "base shows prototype button")
-	_check(g.PROTOTYPE_SCENE == PrototypeScene.resource_path, "button targets prototype scene")
+	var texts := _ui_texts(g)
+	_check(g.play_button.text == "GRAJ", "play label without progress")
+	_check(not texts.contains("PROTOTYP") and not texts.contains("BUILD") and not texts.contains("ROZPOCZNIJ") and not texts.contains("WYPRAW"), "start screen hides legacy texts")
+	_check(_count_buttons(g) == 1, "start screen has single button")
 	g.queue_free()
 	await process_frame
+	var file := FileAccess.open(save, FileAccess.WRITE)
+	file.store_string(JSON.stringify({"version": MineModel.SAVE_VERSION, "banked_value": 7, "pick_level": 0, "backpack_level": 0}))
+	file.close()
+	var before := _fingerprint(save)
+	g = EntryScene.instantiate()
+	g.save_path = save
+	root.add_child(g)
+	await process_frame
+	_check(g.play_button.text == "KONTYNUUJ", "continue label with progress")
+	g.play_button.pressed.emit()
+	await process_frame
+	await process_frame
+	var mine: Node = current_scene
+	_check(mine != null and mine.scene_file_path == PrototypeScene.resource_path, "play opens mine scene")
+	_check(_fingerprint(save) == before, "play leaves progress untouched")
+	_check(mine.MAIN_SCENE != MainScene.resource_path, "base never opens legacy scene")
+	g.queue_free()
+	mine._go_base()
+	await process_frame
+	await process_frame
+	_check(current_scene != null and current_scene.scene_file_path == EntryScene.resource_path, "base returns to start screen")
+	current_scene.queue_free()
+	await process_frame
 	return true
+
+func _ui_texts(node: Node) -> String:
+	var out := ""
+	if node is Label or node is Button:
+		out += node.text + "
+"
+	for child in node.get_children():
+		out += _ui_texts(child)
+	return out
+
+func _count_buttons(node: Node) -> int:
+	var count := 1 if node is Button else 0
+	for child in node.get_children():
+		count += _count_buttons(child)
+	return count
