@@ -63,6 +63,9 @@ func _draw_cell(pos: Vector2i) -> void:
 	if MineModel.is_material(t) or t == MineModel.BEDROCK:
 		var name: String = "bedrock" if t == MineModel.BEDROCK else MineModel.MATERIAL_NAMES[t]
 		draw_texture_rect(art.textures[name][v], rect, false, col)
+		var hint: int = model.hints[i]
+		if hint > 0:
+			draw_texture_rect(art.textures["hint_" + MineModel.MATERIAL_NAMES[hint]], rect, false, col)
 		for side in SIDES:
 			if _is_open(pos + SIDES[side]):
 				draw_texture_rect(art.textures["rim_" + side], rect, false)
@@ -79,6 +82,10 @@ func _draw_cell(pos: Vector2i) -> void:
 	for side in SIDES:
 		if not _is_open(pos + SIDES[side]):
 			draw_texture_rect(art.textures["shade_" + side], rect, false)
+	var pile: Array = model.loot_at(pos)
+	for n in range(pile.size()):
+		var offset := Vector2(14 + (n % 3) * 12, CELL - 30 - (n / 3) * 10)
+		draw_texture_rect(art.textures["icon_" + pile[n]], Rect2(rect.position + offset, Vector2(24, 24)), false)
 
 func _is_open(pos: Vector2i) -> bool:
 	if pos.y < 0:

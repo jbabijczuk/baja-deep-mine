@@ -29,8 +29,9 @@ var hud: Control
 var timer_label: Label
 var timer_caption: Label
 var pack_label: Label
-var pack_bar: ProgressBar
-var ore_labels: Dictionary = {}
+var slot_row: HBoxContainer
+var slot_icons: Array = []
+var stun_label: Label
 var banked_label: Label
 var toast: Label
 var toast_panel: PanelContainer
@@ -38,6 +39,8 @@ var surface_panel: PanelContainer
 var surface_title: Label
 var surface_info: Label
 var descend_button: Button
+var upgrade_buttons: Dictionary = {}
+var save_path: String = MineModel.SAVE_PATH
 var fade: ColorRect
 var touch_dir := Vector2i.ZERO
 var busy: float = 0.0
@@ -54,6 +57,7 @@ func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	model = MineModel.new()
 	model.generate(int(model.config["seed"]))
+	model.load_progress(save_path)
 	art = MineArt.new()
 	art.build()
 	_build_backdrop()
@@ -203,6 +207,9 @@ func _build_overlay() -> void:
 	hp_fill.size = Vector2(48, 6)
 	hp_fill.position = Vector2(-24, 2)
 	hp_bar.add_child(hp_fill)
+	stun_label = _make_label("", 22, Color("#ffe066"))
+	stun_label.visible = false
+	overlay.add_child(stun_label)
 
 func _rebuild_boulders() -> void:
 	for id in boulder_sprites:
@@ -291,38 +298,15 @@ func _build_hud() -> void:
 	var pack_box := VBoxContainer.new()
 	pack_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(pack_box)
-	pack_label = _make_label("PLECAK 0/40 kg", 18, Color("#c9b49a"))
+	pack_label = _make_label("PLECAK 0/3", 18, Color("#c9b49a"))
 	pack_box.add_child(pack_label)
-	pack_bar = ProgressBar.new()
-	pack_bar.show_percentage = false
-	pack_bar.custom_minimum_size = Vector2(0, 16)
-	var bar_bg := StyleBoxFlat.new()
-	bar_bg.bg_color = Color(0, 0, 0, 0.6)
-	bar_bg.set_corner_radius_all(6)
-	var bar_fill := StyleBoxFlat.new()
-	bar_fill.bg_color = Color("#e0a050")
-	bar_fill.set_corner_radius_all(6)
-	pack_bar.add_theme_stylebox_override("background", bar_bg)
-	pack_bar.add_theme_stylebox_override("fill", bar_fill)
-	pack_box.add_child(pack_bar)
-	var ores := HBoxContainer.new()
-	ores.add_theme_constant_override("separation", 10)
-	pack_box.add_child(ores)
-	for res in ["coal", "copper", "gold"]:
-		var icon := TextureRect.new()
-		icon.texture = art.textures["icon_" + res]
-		icon.custom_minimum_size = Vector2(32, 32)
-		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		ores.add_child(icon)
-		var lbl := _make_label("0", 24, Color("#ffe6b8"))
-		ores.add_child(lbl)
-		ore_labels[res] = lbl
+	slot_row = HBoxContainer.new()
+	slot_row.add_theme_constant_override("separation", 8)
+	pack_box.add_child(slot_row)
 	var bank_box := VBoxContainer.new()
 	bank_box.custom_minimum_size = Vector2(130, 0)
 	row.add_child(bank_box)
-	bank_box.add_child(_make_label("WYNIESIONE", 16, Color("#c9b49a")))
+	bank_box.add_child(_make_label("SKARBIEC", 16, Color("#c9b49a")))
 	banked_label = _make_label("0 zł", 32, Color("#ffd75a"))
 	bank_box.add_child(banked_label)
 	var tools := HBoxContainer.new()
@@ -339,6 +323,9 @@ func _build_hud() -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tools.add_child(spacer)
+	var drop_btn := _make_button("WYRZUĆ TAŃSZY (Q)", Callable(self, "drop_cheapest"), 18)
+	tools.add_child(drop_btn)
+	mine_controls.append(drop_btn)
 	tools.add_child(_make_button("DEBUG: KONIEC RUNDY", Callable(self, "_debug_skip"), 18))
 	toast_panel = PanelContainer.new()
 	toast_panel.add_theme_stylebox_override("panel", _panel_style(0.75))
@@ -352,7 +339,7 @@ func _build_hud() -> void:
 	toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	toast_panel.add_child(toast)
 	_build_dpad()
-	var hint := _make_label("Wejdź w skałę, aby kopać.\nWróć do windy z łupem.", 18, Color("#c9b49a"))
+	var hint := _make_label("Szukaj przebarwień w skale — to ślad żyły.\nPełny plecak? Wróć windą i zjedź ponownie.", 18, Color("#c9b49a"))
 	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
 	hint.offset_left = 22
 	hint.offset_top = -110
@@ -409,8 +396,8 @@ func _build_surface_panel() -> void:
 	surface_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	surface_panel.offset_left = -290
 	surface_panel.offset_right = 290
-	surface_panel.offset_top = 140
-	surface_panel.offset_bottom = 440
+	surface_panel.offset_top = 60
+	surface_panel.offset_bottom = 540
 	surface_panel.visible = false
 	hud.add_child(surface_panel)
 	var box := VBoxContainer.new()
@@ -426,6 +413,11 @@ func _build_surface_panel() -> void:
 	descend_button = _make_button("ZJEDŹ WINDĄ W DÓŁ", Callable(self, "_descend"), 24)
 	descend_button.custom_minimum_size = Vector2(0, 70)
 	box.add_child(descend_button)
+	for kind in ["pick", "backpack"]:
+		var btn := _make_button("", Callable(self, "buy_upgrade").bind(kind), 20)
+		btn.custom_minimum_size = Vector2(0, 56)
+		box.add_child(btn)
+		upgrade_buttons[kind] = btn
 	var base_btn := _make_button("WRÓĆ DO BAZY", Callable(self, "_go_base"), 20)
 	base_btn.custom_minimum_size = Vector2(0, 56)
 	box.add_child(base_btn)
@@ -460,6 +452,25 @@ func _input_dir() -> Vector2i:
 			return KEYS[key]
 	return Vector2i.ZERO
 
+func _unhandled_input(event: InputEvent) -> void:
+	if input_enabled and event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_Q:
+		drop_cheapest()
+
+func drop_cheapest() -> Dictionary:
+	var result: Dictionary = model.drop_cheapest()
+	if result["action"] == "drop":
+		world.refresh()
+		_float_text(player_root.position, "−1 %s" % model.config["resources"][result["resource"]]["label"], Color("#c9b49a"))
+	return result
+
+func buy_upgrade(kind: String) -> Dictionary:
+	var result: Dictionary = model.buy(kind)
+	if result["ok"]:
+		show_toast("Kupiono: %s (−%d zł)" % [model.config["upgrades"][kind][(model.pick_level if kind == "pick" else model.backpack_level) - 1]["label"], result["cost"]])
+	elif result["reason"] == "funds":
+		show_toast("Za mało złota: potrzeba %d zł" % result["cost"])
+	return result
+
 func apply_step(dir: Vector2i) -> Dictionary:
 	var result: Dictionary = model.try_step(dir)
 	if dir.x != 0:
@@ -469,6 +480,12 @@ func apply_step(dir: Vector2i) -> Dictionary:
 	if action == "move":
 		_move_player(result["to"], model.move_time())
 		busy = model.move_time()
+		var picked: Array = result["picked"]
+		if not picked.is_empty():
+			world.refresh()
+			_float_text(_cell_center(result["to"]), "+%d podniesiono" % picked.size(), Color("#ffe6b8"))
+		if int(result["left"]) > 0:
+			show_toast("Plecak pełny %d/%d — bryłki leżą dalej na ziemi" % [model.backpack_count(), model.slots()])
 	elif action == "hit" or action == "break":
 		_dig_effect(result, dir)
 	elif action == "push":
@@ -478,6 +495,7 @@ func apply_step(dir: Vector2i) -> Dictionary:
 		create_tween().tween_property(sprite, "rotation", sprite.rotation + PI * 0.5 * dir.x, model.move_time() * 1.5)
 		_move_player(result["to"], model.move_time() * 1.5)
 		busy = model.move_time() * 1.5
+		world.refresh()
 		_dust(_cell_center(result["boulder_to"]) + Vector2(0, 26), Color("#857a6b"), 8, Vector2(-dir))
 	elif action == "too_heavy":
 		show_toast("Głaz za ciężki: waga %d, twoja siła %d" % [result["weight"], result["strength"]])
@@ -503,9 +521,11 @@ func _dig_effect(result: Dictionary, dir: Vector2i) -> void:
 	var color: Color = MATERIAL_COLORS[name]
 	world.refresh()
 	shake = maxf(shake, 2.5)
+	_flash(target)
 	if result["action"] == "hit":
 		busy = float(model.config["player"]["dig_interval"])
 		_dust(face, color, 10, Vector2(-dir))
+		_particles(face, color.lightened(0.2), 5, Vector2(-dir), 260.0, 700.0, 4.0, 0.5)
 		hp_bar.visible = true
 		hp_bar.modulate.a = 1.0
 		hp_bar.position = Vector2(target * CELL) + Vector2(CELL * 0.5, 4)
@@ -522,8 +542,21 @@ func _dig_effect(result: Dictionary, dir: Vector2i) -> void:
 	for res in drops:
 		if int(drops[res]) > 0:
 			_float_text(_cell_center(target), "+%d %s" % [drops[res], model.config["resources"][res]["label"]], MATERIAL_COLORS[name].lightened(0.35))
-	if int(result["lost"]) > 0:
-		show_toast("Plecak pełny! Wróć windą, aby wynieść łup.")
+	if int(result["on_ground"]) > 0:
+		show_toast("Plecak pełny %d/%d! %s leży na ziemi.\nWyrzuć tańszy (Q) albo wróć windą." % [model.backpack_count(), model.slots(), model.config["resources"][result["resource"]]["label"]])
+	elif not drops.is_empty() and model.free_slots() == 0:
+		show_toast("Plecak pełny %d/%d — wracaj do windy" % [model.backpack_count(), model.slots()])
+
+func _flash(cell: Vector2i) -> void:
+	var rect := ColorRect.new()
+	rect.color = Color(1, 0.95, 0.8, 0.35)
+	rect.size = Vector2(CELL, CELL)
+	rect.position = Vector2(cell * CELL)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(rect)
+	var t := create_tween()
+	t.tween_property(rect, "color:a", 0.0, 0.14)
+	t.tween_callback(rect.queue_free)
 
 func _particles(pos: Vector2, color: Color, amount: int, dir: Vector2, speed: float, gravity: float, size: float, life: float) -> CPUParticles2D:
 	var p := CPUParticles2D.new()
@@ -585,7 +618,19 @@ func _handle_event(e: Dictionary) -> void:
 		player_sprite.play("stun")
 		player_sprite.modulate = Color(1.8, 0.5, 0.5)
 		create_tween().tween_property(player_sprite, "modulate", Color.WHITE, 0.6)
-		show_toast("AUĆ! Głaz ogłuszył górnika")
+		var squash := create_tween()
+		squash.tween_property(player_sprite, "scale", Vector2(2.4, 1.6), 0.08)
+		squash.tween_property(player_sprite, "scale", Vector2(2, 2), 0.35).set_trans(Tween.TRANS_ELASTIC)
+		var dropped: Array = e["dropped"]
+		if dropped.is_empty():
+			show_toast("AUĆ! Ogłuszenie %.1f s" % model.stun_left)
+		else:
+			world.refresh()
+			show_toast("AUĆ! Ogłuszenie %.1f s — wypadło %d z plecaka.\nPodnieś bryłki, gdy dojdziesz do siebie." % [model.stun_left, dropped.size()])
+	elif type == "glance":
+		_dust(player_root.position + Vector2(0, -30), Color("#b0a090"), 10, Vector2.UP)
+		shake = maxf(shake, 4.0)
+		show_toast("Głaz odbił się od kasku")
 	elif type == "collapse":
 		shake = 16.0
 		show_toast("ZAWALENIE! Utracono niewyniesiony łup: %d zł" % int(e["lost"]))
@@ -662,6 +707,13 @@ func _update_effects(delta: float) -> void:
 		stars[i].visible = stunned
 		var a := clock * 5.0 + i * TAU / 3.0
 		stars[i].position = Vector2(cos(a) * 18.0, -38 + sin(a) * 6.0)
+	stun_label.visible = stunned
+	if stunned:
+		stun_label.text = "OGŁUSZONY %.1f s" % model.stun_left
+		stun_label.position = player_root.position + Vector2(-90, -96)
+		player_sprite.rotation = sin(clock * 6.0) * 0.12
+	else:
+		player_sprite.rotation = 0.0
 	toast_time = maxf(0.0, toast_time - delta)
 	toast_panel.modulate.a = clampf(toast_time * 2.0, 0.0, 1.0)
 
@@ -676,13 +728,10 @@ func _update_hud() -> void:
 		timer_label.text = _clock(left)
 		var warn := left <= 20.0 and int(clock * 4.0) % 2 == 0
 		timer_label.add_theme_color_override("font_color", Color("#ff6a4a") if warn else Color("#ffe6b8"))
-	var cap := int(model.config["player"]["capacity"])
-	var mass: int = model.backpack_mass()
-	pack_label.text = "PLECAK %d/%d kg  •  %d zł%s" % [mass, cap, model.backpack_value(), "  •  CIĘŻKO!" if model.move_time() > float(model.config["player"]["move_time"]) else ""]
-	pack_bar.max_value = cap
-	pack_bar.value = mass
-	for res in ore_labels:
-		ore_labels[res].text = str(int(model.backpack.get(res, 0)))
+	var full: bool = model.free_slots() == 0
+	pack_label.text = "PLECAK %d/%d%s  •  %d kg  •  %d zł%s" % [model.backpack_count(), model.slots(), " PEŁNY" if full else "", model.backpack_mass(), model.backpack_value(), "  •  CIĘŻKO!" if model.is_heavy() else ""]
+	pack_label.add_theme_color_override("font_color", Color("#ff9a6a") if full else Color("#c9b49a"))
+	_update_slots()
 	banked_label.text = "%d zł" % model.banked_value
 	surface_panel.visible = model.state != "mine" and not animating
 	for control in mine_controls:
@@ -695,8 +744,45 @@ func _update_hud() -> void:
 		descend_button.disabled = true
 	else:
 		surface_title.text = "POWIERZCHNIA"
-		surface_info.text = "Ostatni kurs windy: +%d zł\nŁącznie wyniesione: %d zł\nDo zawalenia: %s" % [last_trip_value, model.banked_value, _clock(model.time_left())]
+		surface_info.text = "Ostatni kurs windy: +%d zł\nSkarbiec: %d zł\nDo zawalenia: %s — możesz zjechać ponownie" % [last_trip_value, model.banked_value, _clock(model.time_left())]
 		descend_button.disabled = false
+	for kind in upgrade_buttons:
+		var btn: Button = upgrade_buttons[kind]
+		var upgrade: Dictionary = model.next_upgrade(kind)
+		if upgrade.is_empty():
+			btn.text = "KILOF: siła %d (max)" % model.pick_power() if kind == "pick" else "PLECAK: %d sloty (max)" % model.slots()
+			btn.disabled = true
+		else:
+			btn.text = "KUP: %s — %d zł" % [String(upgrade["label"]).to_upper(), int(upgrade["cost"])]
+			btn.disabled = model.banked_value < int(upgrade["cost"])
+
+func _update_slots() -> void:
+	if slot_icons.size() != model.slots():
+		for child in slot_row.get_children():
+			child.queue_free()
+		slot_icons.clear()
+		for _n in range(model.slots()):
+			var frame := PanelContainer.new()
+			var style := StyleBoxFlat.new()
+			style.bg_color = Color(0, 0, 0, 0.55)
+			style.border_color = Color("#8a5a2b")
+			style.set_border_width_all(2)
+			style.set_corner_radius_all(6)
+			frame.add_theme_stylebox_override("panel", style)
+			var icon := TextureRect.new()
+			icon.custom_minimum_size = Vector2(36, 36)
+			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			frame.add_child(icon)
+			slot_row.add_child(frame)
+			slot_icons.append(icon)
+	var units: Array = []
+	for res in ["gold", "copper", "coal"]:
+		for _n in range(int(model.backpack.get(res, 0))):
+			units.append(res)
+	for n in range(slot_icons.size()):
+		slot_icons[n].texture = art.textures["icon_" + units[n]] if n < units.size() else null
 
 func _clock(seconds: float) -> String:
 	var s := int(ceil(seconds))

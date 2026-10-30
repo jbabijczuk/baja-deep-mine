@@ -46,6 +46,7 @@ func build() -> void:
 	textures["glow"] = ImageTexture.create_from_image(_glow(64))
 	for res in ["coal", "copper", "gold"]:
 		textures["icon_" + res] = ImageTexture.create_from_image(_icon(res))
+		textures["hint_" + res] = ImageTexture.create_from_image(_hint(res))
 	textures["star"] = ImageTexture.create_from_image(_star())
 	for dir_name in ["up", "down", "left", "right"]:
 		textures["arrow_" + dir_name] = ImageTexture.create_from_image(_arrow(dir_name))
@@ -346,6 +347,26 @@ func _icon(res: String) -> Image:
 	var img := _new_image(16, 16)
 	_nugget(img, rng, Vector2i(8, 8), 5, ORES[res], res)
 	_outline(img)
+	return img
+
+func _hint(res: String) -> Image:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(res) + 4242
+	var ore: Array = ORES[res]
+	var img := _new_image()
+	var stain: Color = ore[1]
+	stain.a = 0.16
+	for _b in range(2):
+		var c := Vector2i(rng.randi_range(6, 25), rng.randi_range(6, 25))
+		for y in range(-5, 6):
+			for x in range(-5, 6):
+				if x * x + y * y <= 22 + rng.randi_range(-4, 4):
+					_put(img, c + Vector2i(x, y), stain)
+	for _f in range(4):
+		var p := Vector2i(rng.randi_range(3, 28), rng.randi_range(3, 28))
+		_put(img, p, ore[1])
+		_put(img, p + Vector2i(1, 0), ore[0])
+		_put(img, p + Vector2i(0, -1), ore[min(2, ore.size() - 1)])
 	return img
 
 func _outline(img: Image) -> void:
