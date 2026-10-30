@@ -25,7 +25,7 @@
     "stun_drop_fraction": 0.5
   },
   "elevator": {
-    "up_seconds": 30,
+    "up_seconds": 20,
     "unload_seconds": 2,
     "down_seconds": 8
   },

@@ -6,7 +6,7 @@ const MainScene = preload("res://scenes/Main.tscn")
 const PrototypeScene = preload("res://scenes/MinePrototype.tscn")
 const RoundSim = preload("res://tests/round_sim.gd")
 const TEST_DIR = "user://dm_proto_tests/"
-const EXPECTED_ASSERTIONS = 201
+const EXPECTED_ASSERTIONS = 214
 const TESTS = [
 	"_test_map_from_seed",
 	"_test_generator_veins_many_seeds",
@@ -27,6 +27,8 @@ const TESTS = [
 	"_test_elevator_round_boundaries",
 	"_test_round_ends_during_unload_and_descent",
 	"_test_elevator_lag_no_duplicate",
+	"_test_elevator_ascent_20s_regression",
+	"_test_elevator_timing_fps_independent",
 	"_test_round_sim_two_trips",
 	"_test_multiple_deposits_one_round",
 	"_test_upgrades_persist_between_rounds",
@@ -489,20 +491,21 @@ func _test_mass_slowdown_table() -> bool:
 func _test_elevator_return() -> bool:
 	var m = _model()
 	var e: Dictionary = m.config["elevator"]
-	_check(is_equal_approx(float(e["up_seconds"]), 30.0) and is_equal_approx(float(e["unload_seconds"]), 2.0) and is_equal_approx(float(e["down_seconds"]), 8.0), "elevator config 30/2/8 s")
+	var up := float(e["up_seconds"])
+	_check(is_equal_approx(up, 20.0) and is_equal_approx(float(e["unload_seconds"]), 2.0) and is_equal_approx(float(e["down_seconds"]), 8.0), "elevator config 20/2/8 s")
 	m.backpack = {"copper": 2, "gold": 1}
 	var r: Dictionary = m.try_step(Vector2i.LEFT)
 	_check(r["action"] == "elevator" and int(r["value"]) == 46 and not r["warn"], "elevator carries loot up")
 	_check(m.state == "ascending" and m.banked_value == 0 and m.backpack_value() == 46, "nothing banked when the ride starts")
 	_check(m.try_step(Vector2i.RIGHT)["action"] == "none" and not m.descend() and not m.buy("pick")["ok"], "no control during ascent")
-	var events: Array = m.tick(30.0)
+	var events: Array = m.tick(up)
 	_check(events.size() == 1 and events[0]["type"] == "arrived" and int(events[0]["value"]) == 46, "arrival reported once")
 	_check(m.state == "unloading" and m.banked_value == 46 and m.backpack.is_empty(), "loot banked once on arrival")
 	m.tick(2.0)
 	_check(m.state == "surface" and m.try_step(Vector2i.RIGHT)["action"] == "none", "no mining on surface")
 	_check(m.descend() and m.state == "descending" and not m.descend(), "descent starts once")
 	m.tick(8.0)
-	_check(m.state == "mine" and m.player == m.start_cell() and m.banked_value == 46 and is_equal_approx(m.round_time, 40.0), "back at station after 30+2+8 s")
+	_check(m.state == "mine" and m.player == m.start_cell() and m.banked_value == 46 and is_equal_approx(m.round_time, 30.0), "back at station after 20+2+8 s")
 	return true
 
 func _test_elevator_banks_only_on_arrival() -> bool:
@@ -512,17 +515,18 @@ func _test_elevator_banks_only_on_arrival() -> bool:
 	m.backpack = {"copper": 2, "gold": 1}
 	m.try_step(Vector2i.LEFT)
 	_check(m.banked_value == 0 and not FileAccess.file_exists(path), "no bank and no save at ride start")
+	var up := float(m.config["elevator"]["up_seconds"])
 	var events: Array = []
-	for _n in range(299):
+	for _n in range(int(round(up * 10.0)) - 1):
 		events += m.tick(0.1)
-	_check(m.state == "ascending" and m.banked_value == 0 and events.is_empty(), "no bank before 30 s")
-	_check(m.round_time > 29.8 and m.elevator_progress() > 0.99, "round clock runs during ascent")
+	_check(m.state == "ascending" and m.banked_value == 0 and events.is_empty(), "no bank before %.0f s" % up)
+	_check(m.round_time > up - 0.2 and m.elevator_progress() > 0.99, "round clock runs during ascent")
 	m.save_progress()
 	var mid = _model()
 	mid.load_progress(path)
 	_check(mid.banked_value == 0, "save during ride grants nothing")
 	events += m.tick(0.2)
-	_check(events.size() == 1 and events[0]["type"] == "arrived" and m.banked_value == 46, "bank exactly once at 30 s")
+	_check(events.size() == 1 and events[0]["type"] == "arrived" and m.banked_value == 46, "bank exactly once at %.0f s" % up)
 	var after = _model()
 	after.load_progress(path)
 	_check(after.banked_value == 46, "arrival saves bank")
@@ -552,12 +556,13 @@ func _ride_with_left(left: float) -> Dictionary:
 	return {"m": m, "warn": warn, "ride_warn": r["warn"], "types": types}
 
 func _test_elevator_round_boundaries() -> bool:
-	var a: Dictionary = _ride_with_left(35.0)
-	_check(not a["warn"] and not a["ride_warn"] and a["m"].banked_value == 46 and a["m"].lost_value == 0 and a["types"].count("arrived") == 1, "35 s left: no warning, deposit")
-	var b: Dictionary = _ride_with_left(30.0)
-	_check(not b["warn"] and not b["ride_warn"] and b["m"].banked_value == 46 and b["m"].lost_value == 0 and b["types"].count("arrived") == 1 and not b["types"].has("collapse"), "30 s left: arrival on the boundary deposits")
-	var c: Dictionary = _ride_with_left(29.9)
-	_check(c["warn"] and c["ride_warn"] and c["m"].banked_value == 0 and c["m"].lost_value == 46 and not c["types"].has("arrived") and c["types"].has("collapse"), "29.9 s left: warning, loot lost in elevator")
+	var up := float(_model().config["elevator"]["up_seconds"])
+	var a: Dictionary = _ride_with_left(up + 5.0)
+	_check(not a["warn"] and not a["ride_warn"] and a["m"].banked_value == 46 and a["m"].lost_value == 0 and a["types"].count("arrived") == 1, "%.1f s left: no warning, deposit" % (up + 5.0))
+	var b: Dictionary = _ride_with_left(up)
+	_check(not b["warn"] and not b["ride_warn"] and b["m"].banked_value == 46 and b["m"].lost_value == 0 and b["types"].count("arrived") == 1 and not b["types"].has("collapse"), "%.1f s left: arrival on the boundary deposits" % up)
+	var c: Dictionary = _ride_with_left(up - 0.1)
+	_check(c["warn"] and c["ride_warn"] and c["m"].banked_value == 0 and c["m"].lost_value == 46 and not c["types"].has("arrived") and c["types"].has("collapse"), "%.1f s left: warning, loot lost in elevator" % (up - 0.1))
 	_check(c["m"].round_index == 1 and c["m"].state == "surface" and c["m"].banked_value == 0, "no late deposit after the break")
 	var m = _model()
 	m.round_time = 270.0
@@ -571,7 +576,7 @@ func _test_elevator_round_boundaries() -> bool:
 
 func _test_round_ends_during_unload_and_descent() -> bool:
 	var m = _model()
-	m.round_time = 249.0
+	m.round_time = float(m.config["round"]["active_seconds"]) - float(m.config["elevator"]["up_seconds"]) - 1.0
 	m.backpack = {"gold": 1}
 	m.try_step(Vector2i.LEFT)
 	var events: Array = m.tick(31.5)
@@ -590,17 +595,74 @@ func _test_elevator_lag_no_duplicate() -> bool:
 	var m = _model()
 	m.backpack = {"copper": 2, "gold": 1}
 	m.try_step(Vector2i.LEFT)
-	var events: Array = m.tick(31.0)
+	var up := float(m.config["elevator"]["up_seconds"])
+	var events: Array = m.tick(up + 1.0)
 	events += m.tick(0.0)
 	m.try_step(Vector2i.LEFT)
 	m.descend()
 	events += m.tick(1.5)
-	_check(events.map(func(e): return e["type"]) == ["arrived", "unloaded"] and m.banked_value == 46, "31 s frame banks once")
+	_check(events.map(func(e): return e["type"]) == ["arrived", "unloaded"] and m.banked_value == 46, "%.0f s frame banks once" % (up + 1.0))
 	var big = _model()
 	big.backpack = {"copper": 2, "gold": 1}
 	big.try_step(Vector2i.LEFT)
 	events = big.tick(500.0)
 	_check(events.map(func(e): return e["type"]) == ["arrived", "unloaded", "break", "new_round"] and big.banked_value == 46 and big.state == "surface" and is_equal_approx(big.round_time, 200.0), "500 s frame runs every phase once")
+	return true
+
+func _test_elevator_ascent_20s_regression() -> bool:
+	var up := float(_model().config["elevator"]["up_seconds"])
+	_check(is_equal_approx(up, 20.0), "ascent time from config is 20.0 s")
+	for t in [up - 0.1, up, up + 0.1]:
+		var m = _model()
+		m.backpack = {"copper": 2, "gold": 1}
+		m.try_step(Vector2i.LEFT)
+		var events: Array = m.tick(t)
+		if t < up:
+			_check(m.state == "ascending" and events.is_empty() and m.banked_value == 0 and m.backpack_value() == 46, "%.1f s: still ascending, no deposit" % t)
+		else:
+			events += m.tick(60.0)
+			var types: Array = events.map(func(e): return e["type"])
+			_check(types.count("arrived") == 1 and m.banked_value == 46 and m.backpack.is_empty(), "%.1f s: arrived, deposit exactly once" % t)
+	var active := float(_model().config["round"]["active_seconds"])
+	for case in [[up + 0.1, true], [up - 0.1, false]]:
+		var m = _model()
+		m.round_time = active - float(case[0])
+		m.backpack = {"copper": 2, "gold": 1}
+		m.try_step(Vector2i.LEFT)
+		var events: Array = []
+		for _n in range(600):
+			events += m.tick(0.05)
+		var types: Array = events.map(func(e): return e["type"])
+		if case[1]:
+			_check(types.count("arrived") == 1 and not types.has("collapse") and m.banked_value == 46 and m.lost_value == 0, "arrival 0.1 s before round end secures loot once")
+		else:
+			_check(not types.has("arrived") and types.count("collapse") == 1 and m.banked_value == 0 and m.lost_value == 46, "round end 0.1 s before arrival loses loot")
+	return true
+
+func _test_elevator_timing_fps_independent() -> bool:
+	for dt in [1.0 / 60.0, 1.0 / 20.0, 0.25]:
+		var m = _model()
+		var e: Dictionary = m.config["elevator"]
+		m.backpack = {"copper": 2, "gold": 1}
+		m.try_step(Vector2i.LEFT)
+		var banked_early := false
+		var arrived_at := -1.0
+		while arrived_at < 0.0:
+			var events: Array = m.tick(dt)
+			if events.is_empty():
+				banked_early = banked_early or m.banked_value != 0 or m.backpack_value() != 46
+			else:
+				arrived_at = m.elevator_from
+		var unload_span: float = m.elevator_until - m.elevator_from
+		while m.state != "surface":
+			m.tick(dt)
+		m.descend()
+		var down_span: float = m.elevator_until - m.elevator_from
+		var down_end: float = m.elevator_until
+		while m.state != "mine":
+			m.tick(dt)
+		_check(is_equal_approx(arrived_at, float(e["up_seconds"])) and is_equal_approx(arrived_at, 20.0) and not banked_early and m.banked_value == 46, "dt %.3f: arrival at 20 s, no bank before" % dt)
+		_check(is_equal_approx(unload_span, float(e["unload_seconds"])) and is_equal_approx(down_span, float(e["down_seconds"])) and m.round_time >= down_end and m.round_time < down_end + dt + 0.0001, "dt %.3f: unload 2 s, descent 8 s" % dt)
 	return true
 
 func _test_round_sim_two_trips() -> bool:
@@ -613,20 +675,22 @@ func _test_round_sim_two_trips() -> bool:
 
 func _test_multiple_deposits_one_round() -> bool:
 	var m = _model()
+	var e: Dictionary = m.config["elevator"]
+	var up := float(e["up_seconds"])
 	m.tick(30.0)
 	m.backpack = {"coal": 3}
 	m.try_step(Vector2i.LEFT)
-	m.tick(32.0)
-	_check(m.state == "surface" and m.banked_value == 9 and is_equal_approx(m.round_time, 62.0), "first deposit keeps round clock running")
+	m.tick(up + float(e["unload_seconds"]))
+	_check(m.state == "surface" and m.banked_value == 9 and is_equal_approx(m.round_time, 30.0 + up + float(e["unload_seconds"])), "first deposit keeps round clock running")
 	m.descend()
-	m.tick(8.0)
-	_check(m.state == "mine" and is_equal_approx(m.time_left(), 210.0), "descend again in the same round")
+	m.tick(float(e["down_seconds"]))
+	_check(m.state == "mine" and is_equal_approx(m.time_left(), 250.0 - up - float(e["unload_seconds"]) - float(e["down_seconds"])), "descend again in the same round")
 	var target: Vector2i = m.player + Vector2i.DOWN
 	m._set_cell(target.x, target.y, MineModel.COPPER)
 	_break(m, Vector2i.DOWN)
 	m.backpack["coal"] = 2
 	m.try_step(Vector2i.LEFT)
-	m.tick(30.0)
+	m.tick(up)
 	_check(m.banked_value == 9 + 9 + 6 and m.round_index == 0, "second deposit adds to bank in same round")
 	m.tick(m.time_left())
 	_check(m.state == "break" and not m.descend(), "no descent after active phase ends")
@@ -646,7 +710,7 @@ func _test_upgrades_persist_between_rounds() -> bool:
 	m.banked_value = 1000
 	_check(not m.buy("pick")["ok"] and m.pick_level == 0 and m.banked_value == 1000, "no shopping inside the mine")
 	m.try_step(Vector2i.LEFT)
-	m.tick(32.0)
+	m.tick(float(m.config["elevator"]["up_seconds"]) + float(m.config["elevator"]["unload_seconds"]))
 	m.banked_value = pick_cost - 1
 	var r: Dictionary = m.buy("pick")
 	_check(not r["ok"] and r["reason"] == "funds" and m.pick_level == 0 and m.banked_value == pick_cost - 1, "purchase verified against funds before granting")
@@ -667,7 +731,7 @@ func _test_progress_save_and_restart() -> bool:
 	_check(m.banked_value == 0 and m.pick_level == 0, "missing save starts fresh")
 	m.backpack = {"gold": 2}
 	m.try_step(Vector2i.LEFT)
-	m.tick(32.0)
+	m.tick(float(m.config["elevator"]["up_seconds"]) + float(m.config["elevator"]["unload_seconds"]))
 	m.buy("pick")
 	var restarted = _model()
 	restarted.load_progress(path)
@@ -953,10 +1017,12 @@ func _test_elevator_ride_whole_pixels() -> bool:
 	var m = scene.model
 	m.backpack = {"copper": 2, "gold": 1}
 	_check(scene.apply_step(Vector2i.LEFT)["action"] == "elevator", "step into elevator starts ride")
-	var half: Dictionary = _ride_frames(scene, 14.5)
-	_check(scene.ride_panel.visible and scene.ride_title.text == "WINDA JEDZIE W GÓRĘ" and absf(scene.ride_bar.value - 14.5 / 30.0) < 0.02 and scene.ride_info.text.begins_with("Na powierzchni za 16 s"), "ride panel shows progress and remaining time")
+	var up := float(m.config["elevator"]["up_seconds"])
+	var half_time := up * 0.5 - 0.5
+	var half: Dictionary = _ride_frames(scene, half_time)
+	_check(scene.ride_panel.visible and scene.ride_title.text == "WINDA JEDZIE W GÓRĘ" and absf(scene.ride_bar.value - half_time / up) < 0.02 and scene.ride_info.text.begins_with("Na powierzchni za %d s" % ceili(up - half_time)), "ride panel shows progress and remaining time")
 	_check(half["moved"] > 100.0 and m.banked_value == 0 and scene.banked_label.text == "0 zł" and not scene.surface_panel.visible and scene.player_sprite.animation == "idle", "cage halfway up with idle miner, nothing banked yet")
-	var rest: Dictionary = _ride_frames(scene, 15.6)
+	var rest: Dictionary = _ride_frames(scene, up - half_time + 0.1)
 	_check(half["off"] + rest["off"] == 0 and half["reverse"] + rest["reverse"] == 0 and maxf(half["max_step"], rest["max_step"]) < 4.0, "ride up is smooth on whole pixels")
 	_check(m.state == "unloading" and m.banked_value == 46 and scene.player_root.position == scene._surface_point() and scene.cage.position == scene._surface_point(), "ride ends exactly at surface point and banks")
 	_ride_frames(scene, 0.1)
@@ -966,9 +1032,13 @@ func _test_elevator_ride_whole_pixels() -> bool:
 	scene._descend()
 	var down: Dictionary = _ride_frames(scene, 8.0 + m.move_time() + 0.1)
 	_check(m.state == "mine" and down["off"] == 0 and down["max_step"] < 6.0 and scene.player_root.position == scene._cell_center(m.player), "descent keeps whole pixels and ends in tile center")
-	m.round_time = 260.0
+	var active := float(m.config["round"]["active_seconds"])
+	m.round_time = active - up
 	scene._process(0.0)
-	_check(scene.warn_label.visible and scene.warn_label.text == "Winda jedzie 30 s. Nie zdążysz przed zawaleniem!", "warning under 30 s left")
+	_check(not scene.warn_label.visible, "no warning with exactly %.0f s left" % up)
+	m.round_time = active - up * 0.5
+	scene._process(0.0)
+	_check(scene.warn_label.visible and scene.warn_label.text == "Winda jedzie %d s. Nie zdążysz przed zawaleniem!" % int(up), "warning under %.0f s left" % up)
 	m.round_time = 0.0
 	m.backpack = {"coal": 1}
 	scene.apply_step(Vector2i.LEFT)
@@ -980,7 +1050,9 @@ func _test_elevator_ride_whole_pixels() -> bool:
 	return true
 
 func _test_scene_arrival_and_break_same_frame() -> bool:
-	for start in [249.0, 250.0]:
+	var cfg: Dictionary = _model().config
+	var last_start := float(cfg["round"]["active_seconds"]) - float(cfg["elevator"]["up_seconds"])
+	for start in [last_start - 1.0, last_start]:
 		var scene: Node2D = PrototypeScene.instantiate()
 		scene.save_path = TEST_DIR + "arrival_break_%d.json" % int(start)
 		root.add_child(scene)

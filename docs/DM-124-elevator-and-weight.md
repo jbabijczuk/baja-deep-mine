@@ -1,5 +1,7 @@
 # DM-124 — winda 30 s i spowolnienie z łupem
 
+> Wjazd skrócono do 20 s w DM-125 (`docs/DM-125-elevator-20s.md`). Liczby 30 s poniżej opisują stan z DM-124.
+
 ## Wniosek
 
 Wjazd windą trwa 30 s, rozładunek 2 s, zjazd 8 s (pełny cykl 40 s). Łup trafia do skarbca dopiero po dojeździe. Jeśli faza aktywna skończy się w trakcie wjazdu, łup przepada. Górnik zwalnia od pierwszej bryłki: czas pola = `0,30 s × clamp(1 + 0,12 × kg, 1, 2,4)`. Stary próg 8 kg i mnożnik 1,6 usunięto, więc kary się nie nakładają. Runda zostaje 280 + 20 s. Ostateczną ocenę grywalności wydaje właściciel w ręcznym teście.
