@@ -9,6 +9,9 @@ const MAIN_SCENE = "res://scenes/Main.tscn"
 const KEYS = {KEY_W: Vector2i.UP, KEY_UP: Vector2i.UP, KEY_S: Vector2i.DOWN, KEY_DOWN: Vector2i.DOWN, KEY_A: Vector2i.LEFT, KEY_LEFT: Vector2i.LEFT, KEY_D: Vector2i.RIGHT, KEY_RIGHT: Vector2i.RIGHT}
 const MATERIAL_COLORS = {"dirt": Color("#94704f"), "stone": Color("#7f8996"), "coal": Color("#4a4b52"), "copper": Color("#d4733a"), "gold": Color("#e8b52e")}
 const DARKNESS = Color(0.11, 0.12, 0.2)
+const CAMERA_SMOOTHING = 7.0
+const DIAG_WINDOW = 2.0
+const DIAG_REFRESH = 0.5
 
 var model
 var art
@@ -52,6 +55,14 @@ var clock: float = 0.0
 var last_trip_value: int = 0
 var input_enabled: bool = true
 var mine_controls: Array = []
+var moving: bool = false
+var move_from := Vector2.ZERO
+var move_to := Vector2.ZERO
+var move_duration: float = 0.0
+var camera_pos := Vector2.ZERO
+var diag_label: Label
+var diag_deltas: Array = []
+var diag_time: float = 0.0
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -68,8 +79,8 @@ func _ready() -> void:
 	_build_hud()
 	_rebuild_boulders()
 	_place_at_station()
-	camera.global_position = _camera_target()
-	camera.reset_smoothing()
+	camera_pos = _camera_target()
+	camera.global_position = camera_pos
 	_update_hud()
 
 func _cell_center(pos: Vector2i) -> Vector2:
@@ -95,8 +106,6 @@ func _build_world() -> void:
 	add_child(world)
 	world.setup(model, art)
 	camera = Camera2D.new()
-	camera.position_smoothing_enabled = true
-	camera.position_smoothing_speed = 7.0
 	camera.limit_left = 0
 	camera.limit_right = model.width * CELL
 	camera.limit_top = -900
@@ -352,6 +361,10 @@ func _build_hud() -> void:
 	fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(fade)
+	diag_label = _make_label("", 16, Color("#b8ffb0"))
+	diag_label.position = Vector2(14, 214)
+	diag_label.visible = false
+	hud.add_child(diag_label)
 
 func _build_dpad() -> void:
 	var size := 118.0
@@ -432,14 +445,22 @@ func _process(delta: float) -> void:
 		fall_timer = 0.0
 		for e in model.step_boulders():
 			_handle_event(e)
-	busy = maxf(0.0, busy - delta)
-	if not animating and model.state == "mine" and busy <= 0.0:
-		var dir := _input_dir()
-		if dir != Vector2i.ZERO:
-			apply_step(dir)
-		elif model.stun_left <= 0.0 and player_sprite.animation != "idle":
-			player_sprite.play("idle")
+	var was_busy := busy > 0.0
+	busy -= delta
+	if busy <= 0.0:
+		var carry := -busy if was_busy else 0.0
+		busy = 0.0
+		_update_move()
+		if not animating and model.state == "mine":
+			var dir := _input_dir()
+			if dir != Vector2i.ZERO:
+				apply_step(dir)
+				busy = maxf(0.0, busy - carry)
+			elif model.stun_left <= 0.0 and player_sprite.animation != "idle":
+				player_sprite.play("idle")
+	_update_move()
 	_update_effects(delta)
+	_update_diagnostics(delta)
 	_update_hud()
 
 func _input_dir() -> Vector2i:
@@ -453,8 +474,47 @@ func _input_dir() -> Vector2i:
 	return Vector2i.ZERO
 
 func _unhandled_input(event: InputEvent) -> void:
-	if input_enabled and event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_Q:
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return
+	if event.physical_keycode == KEY_F3:
+		toggle_diagnostics()
+	elif input_enabled and event.physical_keycode == KEY_Q:
 		drop_cheapest()
+
+func diagnostics_allowed() -> bool:
+	return OS.is_debug_build() or not OS.has_feature("android")
+
+func toggle_diagnostics() -> bool:
+	diag_label.visible = diagnostics_allowed() and not diag_label.visible
+	diag_time = DIAG_REFRESH
+	return diag_label.visible
+
+func motion_state() -> String:
+	if model.stun_left > 0.0:
+		return "stun"
+	if moving:
+		return "moving"
+	if busy > 0.0 and player_sprite.animation == "dig":
+		return "dig"
+	return "idle"
+
+func _update_diagnostics(delta: float) -> void:
+	diag_deltas.append(delta)
+	var total := 0.0
+	for d in diag_deltas:
+		total += d
+	while total > DIAG_WINDOW and diag_deltas.size() > 1:
+		total -= diag_deltas.pop_front()
+	if not diag_label.visible:
+		return
+	diag_time += delta
+	if diag_time < DIAG_REFRESH:
+		return
+	diag_time = 0.0
+	var worst := 0.0
+	for d in diag_deltas:
+		worst = maxf(worst, d)
+	diag_label.text = "FPS %d\nklatka śr %.1f ms / max %.1f ms (%.0f s)\nmove_time %.2f s\nstan %s" % [Engine.get_frames_per_second(), total / diag_deltas.size() * 1000.0, worst * 1000.0, DIAG_WINDOW, model.move_time(), motion_state()]
 
 func drop_cheapest() -> Dictionary:
 	var result: Dictionary = model.drop_cheapest()
@@ -510,7 +570,19 @@ func apply_step(dir: Vector2i) -> Dictionary:
 
 func _move_player(to: Vector2i, duration: float) -> void:
 	_play_for("walk", duration)
-	create_tween().tween_property(player_root, "position", _cell_center(to), duration)
+	move_from = player_root.position
+	move_to = _cell_center(to)
+	move_duration = duration
+	moving = true
+
+func _update_move() -> void:
+	if not moving:
+		return
+	if busy <= 0.0:
+		moving = false
+		player_root.position = move_to
+		return
+	player_root.position = move_from.lerp(move_to, 1.0 - busy / move_duration).round()
 
 func _play_for(anim: String, duration: float, backwards: bool = false) -> void:
 	var frames: SpriteFrames = player_sprite.sprite_frames
@@ -680,9 +752,9 @@ func _collapse_to_surface() -> void:
 	t.tween_property(fade, "color:a", 1.0, 0.6)
 	t.tween_callback(func():
 		cage.position = _surface_point()
+		moving = false
 		player_root.position = _surface_point()
-		camera.global_position = _camera_target()
-		camera.reset_smoothing())
+		camera_pos = _camera_target())
 	t.tween_property(fade, "color:a", 0.0, 0.6)
 	t.tween_callback(func(): animating = false)
 
@@ -697,7 +769,8 @@ func _camera_target() -> Vector2:
 	return player_root.position + Vector2(0, 40)
 
 func _update_effects(delta: float) -> void:
-	camera.global_position = _camera_target()
+	camera_pos = camera_pos.lerp(_camera_target(), 1.0 - exp(-CAMERA_SMOOTHING * delta))
+	camera.global_position = camera_pos.round()
 	shake = maxf(0.0, shake - delta * 30.0)
 	camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake
 	for i in range(lamp_lights.size()):

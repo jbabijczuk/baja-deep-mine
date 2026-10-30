@@ -6,7 +6,7 @@ const MainScene = preload("res://scenes/Main.tscn")
 const PrototypeScene = preload("res://scenes/MinePrototype.tscn")
 const RoundSim = preload("res://tests/round_sim.gd")
 const TEST_DIR = "user://dm_proto_tests/"
-const EXPECTED_ASSERTIONS = 137
+const EXPECTED_ASSERTIONS = 153
 const TESTS = [
 	"_test_map_from_seed",
 	"_test_generator_veins_many_seeds",
@@ -30,6 +30,11 @@ const TESTS = [
 	"_test_scene_smoke",
 	"_test_scene_loads_progress",
 	"_test_scene_dig_and_walk_rhythm",
+	"_test_held_walk_ten_cells_no_gap_no_drift",
+	"_test_direction_changes_no_teleport",
+	"_test_stun_and_block_keep_position",
+	"_test_collapse_stops_move",
+	"_test_diagnostics_overlay",
 	"_test_base_navigation_button",
 ]
 
@@ -623,6 +628,153 @@ func _test_scene_dig_and_walk_rhythm() -> bool:
 	m.backpack = {"gold": 2}
 	r = scene.apply_step(Vector2i.UP)
 	_check(r["action"] == "move" and is_equal_approx(scene.busy, float(p["move_time"]) * float(p["slow_move_multiplier"])) and is_equal_approx(_anim_seconds(scene), scene.busy), "heavy walk is slower and animation follows")
+	scene.queue_free()
+	await process_frame
+	return true
+
+func _open_scene(file_name: String):
+	var scene: Node2D = PrototypeScene.instantiate()
+	scene.save_path = TEST_DIR + file_name
+	root.add_child(scene)
+	await process_frame
+	var m = scene.model
+	m.boulders = {}
+	scene._rebuild_boulders()
+	var start := Vector2i(m.shaft_x + 3, m.player.y + 2)
+	for y in range(start.y - 2, start.y + 3):
+		for x in range(start.x - 2, start.x + 13):
+			m._set_cell(x, y, MineModel.EMPTY)
+	m.player = start
+	scene.world.refresh()
+	scene._place_at_station()
+	scene.input_enabled = true
+	return scene
+
+func _on_cell_path(scene, pos: Vector2) -> bool:
+	var half := Vector2(scene.CELL, scene.CELL) * 0.5
+	var local := pos - half
+	return is_zero_approx(fposmod(local.x, scene.CELL)) or is_zero_approx(fposmod(local.y, scene.CELL))
+
+func _test_held_walk_ten_cells_no_gap_no_drift() -> bool:
+	var scene = await _open_scene("smooth_walk.json")
+	var m = scene.model
+	var start: Vector2i = m.player
+	var last: Vector2 = scene.player_root.position
+	var backwards := 0
+	var max_step := 0.0
+	var elapsed := 0.0
+	var worst_delta := 0.0
+	scene.touch_dir = Vector2i.RIGHT
+	await process_frame
+	var frames := 0
+	while (m.player.x < start.x + 10 or scene.moving) and frames < 5000:
+		await process_frame
+		frames += 1
+		var delta: float = scene.get_process_delta_time()
+		elapsed += delta
+		worst_delta = maxf(worst_delta, delta)
+		if m.player.x >= start.x + 10:
+			scene.touch_dir = Vector2i.ZERO
+		var dx: float = scene.player_root.position.x - last.x
+		if dx < 0.0:
+			backwards += 1
+		max_step = maxf(max_step, absf(dx))
+		last = scene.player_root.position
+	await process_frame
+	_check(m.player == start + Vector2i(10, 0), "held key moves exactly ten cells")
+	_check(scene.player_root.position == scene._cell_center(m.player), "root ends exactly in tile center after ten cells")
+	_check(backwards == 0 and absf(elapsed - 10.0 * m.move_time()) <= 2.0 * worst_delta, "ten held cells take ten move times without gaps or backward steps")
+	_check(max_step < scene.CELL * 0.5, "no teleport frame while walking")
+	_check(scene.camera.global_position == scene.camera.global_position.round() and scene.player_root.position == scene.player_root.position.round(), "camera and miner on whole pixels")
+	scene.queue_free()
+	await process_frame
+	return true
+
+func _test_direction_changes_no_teleport() -> bool:
+	var scene = await _open_scene("smooth_turns.json")
+	var m = scene.model
+	var start: Vector2i = m.player
+	var steps := 0
+	var off_path := 0
+	var max_step := 0.0
+	var last: Vector2 = scene.player_root.position
+	var cell: Vector2i = m.player
+	for dir in [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP, Vector2i.RIGHT]:
+		scene.touch_dir = dir
+		var frames := 0
+		while m.player == cell and frames < 600:
+			await process_frame
+			frames += 1
+		if (m.player - cell).length_squared() == 1:
+			steps += 1
+		cell = m.player
+		scene.touch_dir = Vector2i.ZERO
+		for _n in range(3):
+			await process_frame
+			max_step = maxf(max_step, scene.player_root.position.distance_to(last))
+			last = scene.player_root.position
+			if not _on_cell_path(scene, scene.player_root.position):
+				off_path += 1
+		while scene.moving and frames < 600:
+			await process_frame
+			frames += 1
+			max_step = maxf(max_step, scene.player_root.position.distance_to(last))
+			last = scene.player_root.position
+	_check(steps == 5 and m.player == start + Vector2i.RIGHT, "each direction command moves one cell")
+	_check(off_path == 0 and max_step < scene.CELL * 0.5, "turns stay on cell lines without teleport")
+	_check(scene.player_root.position == scene._cell_center(m.player), "root rests in tile center after turns")
+	scene.queue_free()
+	await process_frame
+	return true
+
+func _test_stun_and_block_keep_position() -> bool:
+	var scene = await _open_scene("smooth_stun.json")
+	var m = scene.model
+	m._set_cell(m.player.x - 1, m.player.y, MineModel.BEDROCK)
+	scene.touch_dir = Vector2i.LEFT
+	for _n in range(20):
+		await process_frame
+	_check(scene.player_root.position == scene._cell_center(m.player) and not scene.moving, "blocked step keeps root in center")
+	scene.touch_dir = Vector2i.ZERO
+	await create_timer(0.2).timeout
+	scene.apply_step(Vector2i.RIGHT)
+	await process_frame
+	m.stun_left = 1.0
+	scene._handle_event({"type": "hit_player", "dropped": []})
+	scene.touch_dir = Vector2i.RIGHT
+	await create_timer(m.move_time() + 0.1).timeout
+	var rest: Vector2 = scene.player_root.position
+	_check(rest == scene._cell_center(m.player) and scene.motion_state() == "stun", "move started before stun finishes in center")
+	var drift := 0
+	for _n in range(30):
+		await process_frame
+		if scene.player_root.position != rest:
+			drift += 1
+	_check(drift == 0, "no tween moves root during stun")
+	scene.queue_free()
+	await process_frame
+	return true
+
+func _test_collapse_stops_move() -> bool:
+	var scene = await _open_scene("smooth_collapse.json")
+	scene.input_enabled = false
+	scene._move_player(scene.model.player + Vector2i.RIGHT, 1.0)
+	scene.busy = 1.0
+	scene._collapse_to_surface()
+	await create_timer(1.4).timeout
+	_check(scene.player_root.position == scene._surface_point() and not scene.moving, "collapse cancels walk and keeps miner at surface")
+	scene.queue_free()
+	await process_frame
+	return true
+
+func _test_diagnostics_overlay() -> bool:
+	var scene = await _open_scene("smooth_diag.json")
+	_check(not scene.diag_label.visible, "diagnostics hidden by default")
+	_check(scene.toggle_diagnostics() and scene.diag_label.visible, "F3 toggle shows diagnostics on desktop")
+	await create_timer(0.6).timeout
+	var text: String = scene.diag_label.text
+	_check(text.begins_with("FPS ") and text.contains("max") and text.contains("move_time 0.30") and text.contains("stan idle"), "diagnostics show fps, frame time, move_time and state")
+	_check(not scene.toggle_diagnostics() and not scene.diag_label.visible, "second toggle hides diagnostics")
 	scene.queue_free()
 	await process_frame
 	return true
