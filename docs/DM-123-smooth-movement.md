@@ -19,7 +19,33 @@ Szarpanie przy trzymaniu kierunku było błędem w Godot, niezależnym od RDP: n
 | Skoki odległości postać–kamera > 2 px | 16–17 | 2 (start ruchu kamery) |
 | Pozycja końcowa | dokładnie środek pola | dokładnie środek pola |
 
-Czego nie zmierzono: FPS podczas kopania, kolizji z głazem, jazdy windą i z obciążeniem 8 kg (pomiar objął wyłącznie chodzenie); FPS na Androidzie; liczby klatek, które dociera przez RDP. Skrypt pomiarowy był jednorazowy i nie wszedł do repozytorium.
+Skrypt tego pomiaru był jednorazowy i nie wszedł do repozytorium.
+
+## Pomiar pozostałych scenariuszy (runda review 1)
+
+Narzędzie: `tools/measure_motion.gd`, uruchomienie w oknie (bez `--headless`): `"$GODOT_BIN" --path . -s res://tools/measure_motion.gd`. Te same metryki co wyżej; sterowanie przez `touch_dir`, czyli tą samą ścieżką co klawisz w `_process`. Każdy scenariusz 3 razy, nowa scena i świeży zapis; wyniki trzech przebiegów podano jako zakres.
+
+Środowisko: Godot 4.7.2, GL Compatibility, vsync włączony, okno 720×1061. **Uwaga:** tym razem Windows działał w sesji RDP (`query session` → `rdp-tcp#1`), a nie `Console`. Godot renderował lokalnie z tempem 60 klatek/s; ekran oglądany przez RDP raportował 32 Hz. Liczby dotyczą klatek Godot, nie obrazu dostarczonego przez RDP.
+
+| Scenariusz | Klatki | FPS (śr. licznika / rzeczywiste) | Klatka śr. / max | Postoje w ruchu | Ruch wstecz | Klatki podpikselowe | Skoki postać–kamera > 2 px | Załamania ruchu kamery > 2 px |
+|---|---|---|---|---|---|---|---|---|
+| Marsz 12 pól (kontrola) | 248 | 58,1–59,6 / 60,0 | 16,67 / 16,9–17,1 ms | 0 | 0 | 0 | 6 | 0 |
+| Zmiany kierunku (P4, D2, L3, G2, P2, L2, P1 bez puszczania) | 320 | 59,4–59,9 / 60,0 | 16,67 / 17,0–17,3 ms | 0 | 0 | 0 | 57 | 0 |
+| Obciążenie 8 kg (2× złoto, `move_time` 0,48 s), 12 pól | 377 | 59,3–59,9 / 60,1 | 16,63–16,64 / 17,0–18,0 ms | 0 | 0 | 0 | 1 | 0 |
+| Kopanie: 8 pól ziemi w rzędzie, przytrzymany kierunek | 576 | 59,7–60,0 / 60,0 | 16,67 / 17,1–17,4 ms | 0 | 0 | 0 | 33–35 | 0 |
+| Głaz: pchanie głazu wagi 1 (3 pola), potem 2,5 s w głaz wagi 3 | 332 | 59,2–59,7 / 60,0 | 16,67 / 17,0–17,1 ms | 0 | 0 | 0 | 3 | 0 |
+| Winda: wejście, wyjazd w górę, zjazd w dół | 290 | 59,0–59,4 / 60,0 | 16,67 / 17,0–19,1 ms | 0 | 0 | 0 (przed poprawką 258–259) | 47 (przed: 65) | 0 |
+
+Definicje: „postój” = klatka bez zmiany pozycji, gdy kierunek jest trzymany, a postać była w ruchu także w poprzedniej klatce. „Ruch wstecz” = przesunięcie przeciwne do bieżącego kroku. „Podpiksel” = postać, kamera lub klatka windy poza pełnym pikselem. „Skok postać–kamera” = zmiana wektora postać–kamera o ponad 2 px w jednej klatce, czyli prędkość postaci na ekranie. „Załamanie kamery” = zmiana prędkości kamery o ponad 2 px między klatkami. FPS z licznika `Engine` jest niższy w pierwszej sekundzie każdej sceny (min 46–57), dlatego podano też tempo rzeczywiste z `Time.get_ticks_usec`.
+
+Obserwacje:
+
+- Max klatki we wszystkich scenariuszach mieścił się w 16,8–20,9 ms. Raz w przebiegu przed poprawką (głaz) wystąpiła pojedyncza klatka 35,6 ms; po poprawce się nie powtórzyła i nie da się jej przypisać scenariuszowi. Lagu związanego z kopaniem, głazem ani obciążeniem nie zmierzono.
+- Kamera nie ma załamań (0 w każdym scenariuszu). Skoki postać–kamera pojawiają się wyłącznie przy starcie, zatrzymaniu i zawróceniu postaci: kamera z wygładzaniem dogania postać, więc na ekranie postać przyspiesza na kilka klatek. Przy zawróceniu sięgają 7 px, bo prędkość postaci zmienia się z +3,6 na −3,6 px/klatkę. Kopanie daje ich dużo, bo każde pole to postój i ruszenie. To zamierzone zachowanie kamery z wygładzaniem, nie przerwa w ruchu. Wstrząs przy kopaniu: offset do 2,7 px (zamierzony).
+- **Winda (realny problem, poprawiony).** Wyjazd i zjazd szły zwykłym Tweenem `position`, więc postać i klatka windy stały na pozycjach ułamkowych w 258–259 z 290 klatek (migotanie pikseli, ten sam problem co pkt 4 diagnozy). Teraz te Tweeny zaokrąglają pozycję do pełnych pikseli, a punkt na powierzchni (`_surface_point`) też jest pełnym pikselem (wcześniej y = −102,4).
+- Popychany głaz nadal jedzie i obraca się zwykłym Tweenem (pozycja ułamkowa). Metryka obejmuje tylko postać, kamerę i windę; obrót i tak wyklucza siatkę pikseli. Bez zmian.
+
+Czego nie zmierzono: wrażenia wzrokowego (pomiar jest automatyczny, nikt nie oglądał ekranu), obrazu dostarczonego przez RDP, FPS na Androidzie.
 
 ## Diagnoza — co sprawdzono
 
@@ -32,7 +58,7 @@ Czego nie zmierzono: FPS podczas kopania, kolizji z głazem, jazdy windą i z ob
 
 ## Co zmieniono
 
-- `_move_player` zapisuje tylko `move_from`/`move_to`/`move_duration`. `_update_move` liczy pozycję z tego samego zegara `busy` i zaokrągla ją do pełnych pikseli. Kiedy ruch się kończy, postać stoi dokładnie w `_cell_center`. Na pozycji postaci podczas chodzenia nie działa już żaden Tween. Winda i zawalenie zostały na Tweenach, bo w tym czasie chodzenie jest zablokowane (`animating`); zawalenie dodatkowo przerywa trwający krok.
+- `_move_player` zapisuje tylko `move_from`/`move_to`/`move_duration`. `_update_move` liczy pozycję z tego samego zegara `busy` i zaokrągla ją do pełnych pikseli. Kiedy ruch się kończy, postać stoi dokładnie w `_cell_center`. Na pozycji postaci podczas chodzenia nie działa już żaden Tween. Winda i zawalenie zostały na Tweenach, bo w tym czasie chodzenie jest zablokowane (`animating`); zawalenie dodatkowo przerywa trwający krok. Tweeny windy (`_tween_pixels`) ustawiają postać i klatkę windy na pełnych pikselach.
 - Przy trzymanym kierunku następny krok startuje w tej samej klatce, w której kończy się poprzedni, a nadwyżka czasu przechodzi na nowy krok. Pierwszy krok po bezczynności startuje od zera.
 - Kamera: wygładzanie wykładnicze `1 - exp(-7·delta)` (ta sama stała 7, ale niezależne od FPS), liczone po aktualizacji postaci w tej samej klatce, z pozycją zaokrągloną do pełnych pikseli. Wbudowane `position_smoothing` wyłączono, bo nie da się zaokrąglić jego wyniku ani ustalić jego kolejności względem ruchu.
 - F3: nakładka diagnostyczna (FPS, średnia i maksymalna klatka z ostatnich 2 s, `move_time`, stan `moving/idle/dig/stun`), domyślnie ukryta, odświeżana co 0,5 s. Na Androidzie działa tylko w buildzie debug (`OS.is_debug_build()`).
@@ -58,4 +84,4 @@ Obecnie: ziemia 2 HP, kilof 1 → 2 uderzenia (0,76 s); kilof 2 (25 zł) → 1 u
 
 ## Testy automatyczne
 
-`tests/test_mine_prototype.gd` zawiera nowe testy: 10 pól z przytrzymanym kierunkiem (czas = 10 × `move_time` z dokładnością do 2 klatek, bez ruchu wstecz, bez teleportu, koniec dokładnie w środku pola, całe piksele), zmiany kierunku (jeden krok na komendę, pozycja zawsze na linii pól), blokada i ogłuszenie (pozycja się nie zmienia), zawalenie w trakcie kroku oraz nakładka F3.
+`tests/test_mine_prototype.gd` zawiera nowe testy: 10 pól z przytrzymanym kierunkiem (czas = 10 × `move_time` z dokładnością do 2 klatek, bez ruchu wstecz, bez teleportu, koniec dokładnie w środku pola, całe piksele), zmiany kierunku (jeden krok na komendę, pozycja zawsze na linii pól), blokada i ogłuszenie (pozycja się nie zmienia), zawalenie w trakcie kroku, jazda windą w górę i w dół na pełnych pikselach (`_test_elevator_ride_whole_pixels`) oraz nakładka F3.

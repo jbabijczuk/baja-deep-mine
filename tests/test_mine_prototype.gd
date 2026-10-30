@@ -6,7 +6,7 @@ const MainScene = preload("res://scenes/Main.tscn")
 const PrototypeScene = preload("res://scenes/MinePrototype.tscn")
 const RoundSim = preload("res://tests/round_sim.gd")
 const TEST_DIR = "user://dm_proto_tests/"
-const EXPECTED_ASSERTIONS = 153
+const EXPECTED_ASSERTIONS = 157
 const TESTS = [
 	"_test_map_from_seed",
 	"_test_generator_veins_many_seeds",
@@ -34,6 +34,7 @@ const TESTS = [
 	"_test_direction_changes_no_teleport",
 	"_test_stun_and_block_keep_position",
 	"_test_collapse_stops_move",
+	"_test_elevator_ride_whole_pixels",
 	"_test_diagnostics_overlay",
 	"_test_base_navigation_button",
 ]
@@ -763,6 +764,38 @@ func _test_collapse_stops_move() -> bool:
 	scene._collapse_to_surface()
 	await create_timer(1.4).timeout
 	_check(scene.player_root.position == scene._surface_point() and not scene.moving, "collapse cancels walk and keeps miner at surface")
+	scene.queue_free()
+	await process_frame
+	return true
+
+func _elevator_frames(scene) -> Dictionary:
+	var off := 0
+	var max_step := 0.0
+	var last: Vector2 = scene.player_root.position
+	var frames := 0
+	while scene.animating and frames < 600:
+		await process_frame
+		frames += 1
+		var pos: Vector2 = scene.player_root.position
+		if pos != pos.round() or scene.cage.position != scene.cage.position.round():
+			off += 1
+		max_step = maxf(max_step, pos.distance_to(last))
+		last = pos
+	return {"off": off, "max_step": max_step, "frames": frames}
+
+func _test_elevator_ride_whole_pixels() -> bool:
+	var scene: Node2D = PrototypeScene.instantiate()
+	scene.save_path = TEST_DIR + "smooth_elevator.json"
+	root.add_child(scene)
+	await process_frame
+	scene.input_enabled = false
+	_check(scene.apply_step(Vector2i.LEFT)["action"] == "elevator", "step into elevator starts ride")
+	var up: Dictionary = await _elevator_frames(scene)
+	_check(up["frames"] > 60 and up["off"] == 0 and up["max_step"] < scene.CELL * 0.5, "ride up keeps miner and cage on whole pixels without teleport")
+	_check(scene.player_root.position == scene._surface_point() and scene.cage.position == scene._surface_point(), "ride ends exactly at surface point")
+	scene._descend()
+	var down: Dictionary = await _elevator_frames(scene)
+	_check(down["frames"] > 60 and down["off"] == 0 and scene.player_root.position == scene._cell_center(scene.model.player), "descent keeps whole pixels and ends in tile center")
 	scene.queue_free()
 	await process_frame
 	return true

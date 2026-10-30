@@ -87,7 +87,7 @@ func _cell_center(pos: Vector2i) -> Vector2:
 	return Vector2(pos * CELL) + Vector2(CELL, CELL) * 0.5
 
 func _surface_point() -> Vector2:
-	return Vector2(model.shaft_x * CELL + CELL * 0.5, -CELL * 1.6)
+	return Vector2(model.shaft_x * CELL + CELL * 0.5, -CELL * 1.6).round()
 
 func _build_backdrop() -> void:
 	var layer := CanvasLayer.new()
@@ -723,11 +723,11 @@ func _ride_up() -> void:
 	hp_bar.visible = false
 	player_sprite.play("idle")
 	var t := create_tween()
-	t.tween_property(player_root, "position", _cell_center(model.elevator_cell()), model.move_time())
+	_tween_pixels(t, player_root, player_root.position, _cell_center(model.elevator_cell()), model.move_time())
 	t.tween_interval(0.25)
 	t.set_parallel(true)
-	t.tween_property(cage, "position", _surface_point(), 1.6).set_trans(Tween.TRANS_SINE)
-	t.tween_property(player_root, "position", _surface_point(), 1.6).set_trans(Tween.TRANS_SINE)
+	_tween_pixels(t, cage, _cell_center(model.elevator_cell()), _surface_point(), 1.6).set_trans(Tween.TRANS_SINE)
+	_tween_pixels(t, player_root, _cell_center(model.elevator_cell()), _surface_point(), 1.6).set_trans(Tween.TRANS_SINE)
 	t.chain().tween_callback(func():
 		animating = false
 		show_toast("Wyniesiono łup: +%d zł" % last_trip_value))
@@ -741,10 +741,14 @@ func _descend() -> void:
 	cage.position = _surface_point()
 	var t := create_tween()
 	t.set_parallel(true)
-	t.tween_property(cage, "position", _cell_center(model.elevator_cell()), 1.6).set_trans(Tween.TRANS_SINE)
-	t.tween_property(player_root, "position", _cell_center(model.elevator_cell()), 1.6).set_trans(Tween.TRANS_SINE)
-	t.chain().tween_property(player_root, "position", _cell_center(model.player), model.move_time())
+	_tween_pixels(t, cage, _surface_point(), _cell_center(model.elevator_cell()), 1.6).set_trans(Tween.TRANS_SINE)
+	_tween_pixels(t, player_root, _surface_point(), _cell_center(model.elevator_cell()), 1.6).set_trans(Tween.TRANS_SINE)
+	t.chain()
+	_tween_pixels(t, player_root, _cell_center(model.elevator_cell()), _cell_center(model.player), model.move_time())
 	t.chain().tween_callback(func(): animating = false)
+
+func _tween_pixels(t: Tween, node: Node2D, from: Vector2, to: Vector2, duration: float) -> MethodTweener:
+	return t.tween_method(func(p: Vector2): node.position = p.round(), from, to, duration)
 
 func _collapse_to_surface() -> void:
 	animating = true
